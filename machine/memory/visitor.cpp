@@ -1,6 +1,6 @@
 #include "config.h"
-#include "vm.hpp"
-#include "state.hpp"
+#include "machine.hpp"
+#include "thread_state.hpp"
 
 #include "memory.hpp"
 
@@ -16,15 +16,7 @@ namespace rubinius {
         i->set(obj);
       }
 
-      {
-        std::lock_guard<std::mutex> guard(state->vm()->thread_nexus()->threads_mutex());
-
-        for(ThreadList::iterator i = state->vm()->thread_nexus()->threads()->begin();
-            i != state->vm()->thread_nexus()->threads()->end();
-            ++i)
-        {
-          ManagedThread* thr = (*i);
-
+      state->threads()->each(state, [&](STATE, ThreadState* thr) {
           for(Roots::Iterator ri(thr->roots()); ri.more(); ri.advance()) {
             Object* obj = ri->get();
             visit_object(state, &obj, f);
@@ -66,11 +58,8 @@ namespace rubinius {
             }
           }
 
-          if(VM* vm = thr->as_vm()) {
-            vm->visit_objects(state, f);
-          }
-        }
-      }
+          thr->visit_objects(state, f);
+        });
 
       for(auto i = state->collector()->references().begin();
           i != state->collector()->references().end();
@@ -111,18 +100,18 @@ namespace rubinius {
       if(object->visited_p(state->memory()->visit_mark())) {
         if(object->scanned_p()) return;
       } else {
-        object->set_visited(state->memory()->visit_mark());
-        object->unset_scanned();
+        object->set_visited(state, state->memory()->visit_mark());
+        object->unset_scanned(state);
 
         f(state, obj);
       }
 
-      if(state->vm()->stack_limit_p(&object)) {
+      if(state->stack_limit_p(&object)) {
         mark_stack_.add(0, object);
         return;
       }
 
-      object->set_scanned();
+      object->set_scanned(state);
 
       visit_object(state, object->p_klass(), f);
       visit_object(state, object->p_ivars(), f);

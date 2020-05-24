@@ -6,7 +6,9 @@
 
 #include "type_info.hpp"
 #include "configuration.hpp"
+#include "globals.hpp"
 #include "spinlock.hpp"
+#include "symbol_table.hpp"
 
 #include "class/class.hpp"
 #include "class/module.hpp"
@@ -17,13 +19,11 @@
 
 #include "diagnostics.hpp"
 
-#include "util/atomic.hpp"
-#include "util/thread.hpp"
+#include "thread_state.hpp"
 
-#include "state.hpp"
-#include "shared_state.hpp"
-
+#include <atomic>
 #include <functional>
+#include <mutex>
 
 class TestMemory; // So we can friend it properly
 class TestVM; // So we can friend it properly
@@ -41,7 +41,7 @@ namespace rubinius {
     class MainHeap;
 
     class CAPITracer {
-      State* state_;
+      ThreadState* state_;
       std::function<void (STATE, Object**)> tracer_;
 
     public:
@@ -83,9 +83,7 @@ namespace rubinius {
 
   class Memory {
   private:
-    utilities::thread::SpinLock allocation_lock_;
-
-    memory::Collector* collector_;
+    locks::spinlock_mutex allocation_lock_;
 
     /// Garbage collector for CodeResource objects.
     memory::CodeManager code_manager_;
@@ -100,10 +98,15 @@ namespace rubinius {
 
     unsigned int visit_mark_;
 
-    SharedState& shared_;
+    std::atomic<uint64_t> class_count_;
+    std::atomic<int> global_serial_;
+
+    std::recursive_mutex codedb_lock_;
+
+    locks::spinlock_mutex type_info_lock_;
+    locks::spinlock_mutex code_resource_lock_;
 
   public:
-    VM* vm_;
     /// Counter used for issuing object ids when #object_id is called on a
     /// Ruby object.
     size_t last_object_id;
@@ -113,31 +116,45 @@ namespace rubinius {
     /* Config variables */
     size_t large_object_threshold;
 
+    Globals globals;
+    SymbolTable symbols;
+
   public:
+    Memory(STATE, Configuration* configuration);
+    virtual ~Memory();
+
     static void memory_error(STATE);
-
-    void set_vm(VM* vm) {
-      vm_ = vm;
-    }
-
-    VM* vm() {
-      return vm_;
-    }
-
-    SharedState& shared() {
-      return shared_;
-    }
-
-    Memory* memory() {
-      return this;
-    }
 
     void collect_cycle() {
       cycle_++;
     }
 
-    utilities::thread::SpinLock& allocation_lock() {
+    locks::spinlock_mutex& allocation_lock() {
       return allocation_lock_;
+    }
+
+    int inc_class_count() {
+      return ++class_count_;
+    }
+
+    int global_serial() const {
+      return global_serial_;
+    }
+
+    int inc_global_serial() {
+      return ++global_serial_;
+    }
+
+    std::recursive_mutex& codedb_lock() {
+      return codedb_lock_;
+    }
+
+    locks::spinlock_mutex& type_info_lock() {
+      return type_info_lock_;
+    }
+
+    locks::spinlock_mutex& code_resource_lock() {
+      return code_resource_lock_;
     }
 
     memory::CodeManager& code_manager() {
@@ -146,10 +163,6 @@ namespace rubinius {
 
     memory::MainHeap* main_heap() {
       return main_heap_;
-    }
-
-    memory::Collector* collector() {
-      return collector_;
     }
 
     unsigned int cycle() {
@@ -176,13 +189,11 @@ namespace rubinius {
       visit_mark_ ^= 0x3;
     }
 
-  public:
-    Memory(STATE);
-    ~Memory();
+    void after_fork_child(STATE);
 
     // Object must be created in Immix or large object space.
-    Object* new_object(STATE, native_int bytes, object_type type);
-    Object* new_object_pinned(STATE, native_int bytes, object_type type);
+    Object* new_object(STATE, intptr_t bytes, object_type type);
+    Object* new_object_pinned(STATE, intptr_t bytes, object_type type);
 
     /* Allocate a new object in any space that will accommodate it based on
      * the following priority:
@@ -193,8 +204,8 @@ namespace rubinius {
      * The resulting object is UNINITIALIZED. The caller is responsible for
      * initializing all reference fields other than _klass_ and _ivars_.
      */
-    Object* new_object(STATE, Class* klass, native_int bytes, object_type type) {
-      Object* obj = state->vm()->allocate_object(state, bytes, type);
+    Object* new_object(STATE, Class* klass, intptr_t bytes, object_type type) {
+      Object* obj = state->allocate_object(state, bytes, type);
 
       obj->klass(state, klass);
       obj->ivars(cNil);
@@ -210,7 +221,7 @@ namespace rubinius {
      * The resulting object is UNINITIALIZED. The caller is responsible for
      * initializing all reference fields other than _klass_ and _ivars_.
      */
-    Object* new_object_pinned(STATE, Class* klass, native_int bytes, object_type type) {
+    Object* new_object_pinned(STATE, Class* klass, intptr_t bytes, object_type type) {
       Object* obj = new_object_pinned(state, bytes, type);
 
       obj->klass(state, klass);
@@ -220,7 +231,7 @@ namespace rubinius {
     }
 
     template <class T>
-      T* new_object(STATE, Class* klass, native_int bytes, object_type type) {
+      T* new_object(STATE, Class* klass, intptr_t bytes, object_type type) {
         T* obj = new_object(state, klass, bytes, type);
         T::initialize(state, obj, bytes, type);
 
@@ -236,7 +247,7 @@ namespace rubinius {
       }
 
     template <class T>
-      T* new_object(STATE, Class *klass, native_int bytes) {
+      T* new_object(STATE, Class *klass, intptr_t bytes) {
         return static_cast<T*>(new_object(state, klass, bytes, T::type));
       }
 
@@ -250,7 +261,7 @@ namespace rubinius {
       }
 
     template <class T>
-      T* new_bytes(STATE, Class* klass, native_int bytes) {
+      T* new_bytes(STATE, Class* klass, intptr_t bytes) {
         bytes = ObjectHeader::align(sizeof(T) + bytes);
         T* obj = static_cast<T*>(new_object(state, klass, bytes, T::type));
 
@@ -260,8 +271,8 @@ namespace rubinius {
       }
 
     template <class T>
-      T* new_fields(STATE, Class* klass, native_int fields) {
-        native_int bytes = sizeof(T) + (fields * sizeof(Object*));
+      T* new_fields(STATE, Class* klass, intptr_t fields) {
+        intptr_t bytes = sizeof(T) + (fields * sizeof(Object*));
         T* obj = static_cast<T*>(new_object(state, klass, bytes, T::type));
 
         obj->full_size(bytes);
@@ -278,7 +289,7 @@ namespace rubinius {
       }
 
     template <class T>
-      T* new_bytes_pinned(STATE, Class* klass, native_int bytes) {
+      T* new_bytes_pinned(STATE, Class* klass, intptr_t bytes) {
         bytes = ObjectHeader::align(sizeof(T) + bytes);
         T* obj = static_cast<T*>(new_object_pinned(state, klass, bytes, T::type));
 
@@ -288,8 +299,8 @@ namespace rubinius {
       }
 
     template <class T>
-      T* new_fields_pinned(STATE, Class* klass, native_int fields) {
-        native_int bytes = sizeof(T) + (fields * sizeof(Object*));
+      T* new_fields_pinned(STATE, Class* klass, intptr_t fields) {
+        intptr_t bytes = sizeof(T) + (fields * sizeof(Object*));
         T* obj = static_cast<T*>(new_object_pinned(state, klass, bytes, T::type));
 
         obj->full_size(bytes);
@@ -301,7 +312,7 @@ namespace rubinius {
       T* new_object_unmanaged(STATE, Class* klass, intptr_t* mem) {
         T* obj = reinterpret_cast<T*>(mem);
 
-        MemoryHeader::initialize(obj, state->vm()->thread_id(), eThreadRegion, T::type, false);
+        MemoryHeader::initialize(obj, state->thread_id(), eThreadRegion, T::type, false);
 
         obj->klass(state, klass);
         obj->ivars(cNil);
@@ -399,10 +410,11 @@ namespace rubinius {
         return new_module<T>(state, G(module), G(object), name);
       }
 
+    TypeInfo* find_type(int type);
     TypeInfo* find_type_info(Object* obj);
 
     bool valid_object_p(Object* obj);
-    void add_type_info(TypeInfo* ti);
+    void add_type_info(Memory* memory, TypeInfo* ti);
 
     void add_code_resource(STATE, memory::CodeResource* cr);
 

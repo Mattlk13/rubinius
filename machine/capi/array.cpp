@@ -37,14 +37,14 @@ namespace rubinius {
   RArray* MemoryHandle::get_rarray(STATE) {
     if(rarray_p()) {
       return reinterpret_cast<RArray*>(data());
-    } else if(unknown_type_p()) {
+    } else if(object_type_p()) {
       Array* array = c_as<Array>(object());;
-      array->set_type_specific(Array::eRArray);
+      array->set_type_specific(state, Array::eRArray);
 
       RTuple* rtuple = RTuple::from(state, array->tuple());
       array->tuple(state, rtuple);
 
-      native_int size = array->size();
+      intptr_t size = array->size();
       VALUE* ptr = reinterpret_cast<VALUE*>(rtuple->field + array->offset());
 
       RArray* rarray = new RArray;
@@ -90,7 +90,7 @@ namespace rubinius {
         array->tuple(state, rtuple);
       }
 
-      native_int size = array->size();
+      intptr_t size = array->size();
       VALUE* ptr = reinterpret_cast<VALUE*>(rtuple->field + array->offset());
 
       rarray->dmwmb = rarray->ptr = ptr;
@@ -156,7 +156,7 @@ extern "C" {
 
     Array* array = MemoryHandle::object<Array>(self);
 
-    for(native_int i = 0; i < array->size(); i++) {
+    for(intptr_t i = 0; i < array->size(); i++) {
       rb_yield(MemoryHandle::value(array->get(env->state(), i)));
     }
 
@@ -273,7 +273,7 @@ extern "C" {
     NativeMethodEnvironment* env = NativeMethodEnvironment::get();
 
     Array* array = MemoryHandle::object<Array>(self);
-    native_int total = array->size();
+    intptr_t total = array->size();
 
     if(index < 0) {
       index += total;

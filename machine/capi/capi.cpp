@@ -15,8 +15,10 @@
 #include "class/block_environment.hpp"
 #include "class/proc.hpp"
 #include "class/exception.hpp"
+#include "class/unwind_state.hpp"
 
 #include "bug.hpp"
+#include "c_api.hpp"
 #include "call_frame.hpp"
 #include "configuration.hpp"
 #include "lookup_data.hpp"
@@ -111,22 +113,18 @@ namespace rubinius {
               "C-API: invalid constant index");
       }
 
-      CApiConstantNameMap map = env->state()->shared().capi_constant_name_map();
+      C_API::CApiConstantNameMap map = env->state()->c_api()->capi_constant_name_map();
       return map[type];
     }
 
     bool capi_check_interrupts(STATE) {
       void* stack_address;
 
-      if(!state->vm()->check_stack(state, &stack_address)) {
+      if(!state->check_stack(state, &stack_address)) {
         return false;
       }
 
-      if(unlikely(state->vm()->check_local_interrupts())) {
-        return state->vm()->check_thread_raise_or_kill(state);
-      }
-
-      return true;
+      return !state->thread_interrupted_p();
     }
 
     /**
@@ -366,7 +364,7 @@ namespace rubinius {
     /** Make sure the name has the given prefix. */
     Symbol* prefixed_by(STATE, const char* prefix, size_t len, ID name) {
       Symbol* sym_obj = reinterpret_cast<Symbol*>(name);
-      std::string& sym = state->shared().symbols.lookup_cppstring(sym_obj);
+      std::string& sym = state->memory()->symbols.lookup_cppstring(sym_obj);
 
       if(sym.compare(0UL, len, prefix) == 0) return sym_obj;
 
@@ -378,7 +376,7 @@ namespace rubinius {
 
     Symbol* prefixed_by(STATE, const char prefix, ID name) {
       Symbol* sym_obj = reinterpret_cast<Symbol*>(name);
-      std::string& sym = state->shared().symbols.lookup_cppstring(sym_obj);
+      std::string& sym = state->memory()->symbols.lookup_cppstring(sym_obj);
 
       if(sym.c_str()[0] == prefix) return sym_obj;
 
@@ -395,8 +393,8 @@ namespace rubinius {
     void capi_raise_type_error(object_type type, Object* object) {
       NativeMethodEnvironment* env = NativeMethodEnvironment::get();
 
-      TypeInfo* expected = env->state()->vm()->find_type(type);
-      TypeInfo* actual = env->state()->vm()->find_type(object->get_type());
+      TypeInfo* expected = env->state()->memory()->find_type(type);
+      TypeInfo* actual = env->state()->memory()->find_type(object->get_type());
 
       rb_raise(rb_eTypeError, "wrong argument type %s (expected %s)",
           actual->type_name.c_str(), expected->type_name.c_str());
@@ -424,7 +422,7 @@ namespace rubinius {
 
     void capi_raise_break(VALUE obj) {
       NativeMethodEnvironment* env = NativeMethodEnvironment::get();
-      env->state()->vm()->thread_state()->raise_break(
+      env->state()->unwind_state()->raise_break(
           MemoryHandle::object(obj), env->scope()->parent());
       env->current_ep()->return_to(env);
     }
@@ -432,7 +430,7 @@ namespace rubinius {
     Proc* wrap_c_function(void* cb, VALUE cb_data, int arity) {
       NativeMethodEnvironment* env = NativeMethodEnvironment::get();
       NativeMethod* nm = NativeMethod::create(env->state(),
-                          nil<String>(), env->state()->vm()->shared.globals.rubinius.get(),
+                          nil<String>(), env->state()->memory()->globals.rubinius.get(),
                           env->state()->symbol("call"), cb,
                           Fixnum::from(arity), 0);
 
@@ -445,7 +443,7 @@ namespace rubinius {
                      current_block);
       }
 
-      Proc* prc = Proc::create(env->state(), env->state()->vm()->shared.globals.proc.get());
+      Proc* prc = Proc::create(env->state(), env->state()->memory()->globals.proc.get());
       prc->bound_method(env->state(), nm);
 
       return prc;
@@ -461,12 +459,12 @@ extern "C" {
   VALUE capi_get_constant(CApiConstant type) {
     NativeMethodEnvironment* env = NativeMethodEnvironment::get();
 
-    env->shared().capi_constant_lock().lock();
-    CApiConstantHandleMap& map = env->state()->shared().capi_constant_map();
+    env->state()->c_api()->capi_constant_lock().lock();
+    C_API::CApiConstantHandleMap& map = env->state()->c_api()->capi_constant_map();
 
     VALUE value;
 
-    CApiConstantHandleMap::iterator entry = map.find(type);
+    C_API::CApiConstantHandleMap::iterator entry = map.find(type);
     if(entry == map.end()) {
       std::string constant_name = capi_get_constant_name(type);
 
@@ -483,7 +481,7 @@ extern "C" {
       value = entry->second->as_value();
     }
 
-    env->shared().capi_constant_lock().unlock();
+    env->state()->c_api()->capi_constant_lock().unlock();
     return value;
   }
 
@@ -744,7 +742,7 @@ extern "C" {
   {
     NativeMethodEnvironment* env = NativeMethodEnvironment::get();
 
-    State* state = env->state();
+    ThreadState* state = env->state();
     Symbol* method_name = state->symbol(name);
 
     Module* module = NULL;

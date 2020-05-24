@@ -5,8 +5,7 @@
 #include <errno.h>
 
 #include "memory.hpp"
-#include "vm.hpp"
-#include "state.hpp"
+#include "thread_state.hpp"
 
 #include "class/access_variable.hpp"
 #include "class/array.hpp"
@@ -21,7 +20,6 @@
 #include "class/compiled_code.hpp"
 #include "class/channel.hpp"
 #include "class/data.hpp"
-#include "class/diagnostics.hpp"
 #include "class/dir.hpp"
 #include "class/encoding.hpp"
 #include "class/executable.hpp"
@@ -62,7 +60,7 @@
 #include "class/module.hpp"
 #include "class/class.hpp"
 #include "class/atomic.hpp"
-#include "class/thread_state.hpp"
+#include "class/unwind_state.hpp"
 #include "class/unwind_site.hpp"
 
 #include "environment.hpp"
@@ -80,10 +78,10 @@ namespace rubinius {
   // Reset macros since we're inside state
 #undef G
 #undef GO
-#define G(whatever) globals().whatever.get()
-#define GO(whatever) globals().whatever
+#define G(whatever) state->globals().whatever.get()
+#define GO(whatever) state->globals().whatever
 
-  void VM::bootstrap_class(STATE) {
+  void ThreadState::bootstrap_class(STATE) {
     /* BasicObject, Object, Module, Class all have .class == Class.
      * The superclass chain is Class < Module < Object < BasicObject < nil.
      *
@@ -188,7 +186,7 @@ namespace rubinius {
     SingletonClass::attach(state, G(method_table_bucket), sc);
   }
 
-  void VM::initialize_builtin_classes(STATE) {
+  void ThreadState::initialize_builtin_classes(STATE) {
     // Create the immediate classes.
     GO(nil_class).set(state->memory()->new_class<Class, NilClass>(state, "NilClass"));
     GO(true_class).set(state->memory()->new_class<Class, TrueClass>(state, "TrueClass"));
@@ -204,17 +202,17 @@ namespace rubinius {
     // the classes for Fixnum's, nil, true and false.
     for(size_t i = 0; i < SPECIAL_CLASS_SIZE; i++) {
       if(SYMBOL_P(i)) {
-        globals().special_classes[i] = GO(symbol);
+        state->globals().special_classes[i] = GO(symbol);
       } else if(FIXNUM_P(i)) {
-        globals().special_classes[i] = GO(fixnum_class);
+        state->globals().special_classes[i] = GO(fixnum_class);
       } else {
-        globals().special_classes[i] = GO(object); /* unused slot */
+        state->globals().special_classes[i] = GO(object); /* unused slot */
       }
     }
 
-    globals().special_classes[(uintptr_t)cFalse] = GO(false_class);
-    globals().special_classes[(uintptr_t)cNil  ] = GO(nil_class);
-    globals().special_classes[(uintptr_t)cTrue ] = GO(true_class);
+    state->globals().special_classes[(uintptr_t)cFalse] = GO(false_class);
+    state->globals().special_classes[(uintptr_t)cNil  ] = GO(nil_class);
+    state->globals().special_classes[(uintptr_t)cTrue ] = GO(true_class);
 
     /* Create IncludedModule */
     GO(included_module).set(state->memory()->new_class<Class, IncludedModule>(
@@ -242,7 +240,7 @@ namespace rubinius {
     List::bootstrap(state);
     init_ffi(state);
     Thread::bootstrap(state);
-    ThreadState::bootstrap(state);
+    UnwindState::bootstrap(state);
     AccessVariable::bootstrap(state);
     Pointer::bootstrap(state);
     NativeFunction::bootstrap(state);
@@ -270,14 +268,13 @@ namespace rubinius {
     Logger::bootstrap(state);
     JIT::bootstrap(state);
     CodeDB::bootstrap(state);
-    Diagnostics::bootstrap(state);
     Trie::bootstrap(state);
     UnwindSite::bootstrap(state);
   }
 
   // @todo document all the sections of bootstrap_ontology
   /* Creates the rubinius object universe from scratch. */
-  void VM::bootstrap_ontology(STATE) {
+  void ThreadState::bootstrap_ontology(STATE) {
 
     /*
      * Bootstrap everything so we can create fully initialized
@@ -333,7 +330,7 @@ namespace rubinius {
     MachineCode::bootstrap(state);
   }
 
-  void VM::initialize_fundamental_constants(STATE) {
+  void ThreadState::initialize_fundamental_constants(STATE) {
     if(sizeof(int) == sizeof(long)) {
       G(rubinius)->set_const(state, "L64", cFalse);
     } else {
@@ -343,7 +340,7 @@ namespace rubinius {
     G(rubinius)->set_const(state, "WORDSIZE", Fixnum::from(sizeof(void*) * 8));
   }
 
-  void VM::initialize_platform_data(STATE) {
+  void ThreadState::initialize_platform_data(STATE) {
     /* Hook up stub IO class so we can begin bootstrapping. STDIN/OUT/ERR will be
      * replaced in core/zed.rb with the pure Ruby IO objects.
      */
@@ -359,7 +356,7 @@ namespace rubinius {
      * because some are passed to e.g. File.expand_path and having them
      * be uniform is simpler.
      */
-    Environment* env = state->shared().env();
+    Environment* env = state->environment();
 
     if(env) {
       std::string prefix = env->system_prefix();
@@ -404,7 +401,7 @@ namespace rubinius {
     G(rubinius)->set_const(state, "RELEASE_DATE", String::create(state, RBX_RELEASE_DATE));
     G(rubinius)->set_const(state, "DEBUG_BUILD", RBOOL(RBX_DEBUG_BUILD));
     G(rubinius)->set_const(state, "PROFILER",
-        RBOOL(state->shared().config.diagnostics_profiler_enabled));
+        RBOOL(state->configuration()->diagnostics_profiler_enabled));
     G(rubinius)->set_const(state, "LDSHARED", String::create(state, RBX_LDSHARED));
     G(rubinius)->set_const(state, "LDSHAREDXX", String::create(state, RBX_LDSHAREDXX));
 
@@ -443,7 +440,7 @@ namespace rubinius {
     G(rubinius)->set_const(state, "TERMINAL_WIDTH", Fixnum::from(w.ws_col));
   }
 
-  void VM::bootstrap_symbol(STATE) {
+  void ThreadState::bootstrap_symbol(STATE) {
 #define add_sym(name) GO(sym_ ## name).set(state->symbol(#name))
     add_sym(object_id);
     add_sym(method_missing);
@@ -476,7 +473,7 @@ namespace rubinius {
     GO(sym_keyword_object).set(state->symbol("keyword_object?"));
   }
 
-  void VM::setup_errno(STATE, int num, const char* name, Class* sce, Module* ern) {
+  void ThreadState::setup_errno(STATE, int num, const char* name, Class* sce, Module* ern) {
     bool found = false;
 
     Object* key = Fixnum::from(num);
@@ -500,7 +497,7 @@ namespace rubinius {
     }
   }
 
-  void VM::bootstrap_exceptions(STATE) {
+  void ThreadState::bootstrap_exceptions(STATE) {
     Class *exc, *scp, *std, *arg, *nam, *loe, *rex, *stk, *sce, *type, *lje, *vme, *me, *cue;
     Class *rng, *rte;
 

@@ -1,18 +1,17 @@
 #ifndef RBX_CONSOLE_HPP
 #define RBX_CONSOLE_HPP
 
-#include "machine_threads.hpp"
-
-#include "memory/root.hpp"
-
-#include "util/thread.hpp"
+#include "machine_thread.hpp"
+#include "spinlock.hpp"
 
 #include <list>
+#include <mutex>
 #include <string>
 
 namespace rubinius {
-  class VM;
-  class State;
+  class Console;
+  class Channel;
+  class ThreadState;
   class FSEvent;
   class Object;
   class String;
@@ -22,53 +21,10 @@ namespace rubinius {
     class Request;
     class Response;
 
-    class Console {
-      std::string console_path_;
-      std::string request_path_;
-      std::string response_path_;
-
-      Listener* listener_;
-      Response* response_;
-      Request* request_;
-
-      memory::TypedRoot<Object*> ruby_console_;
-
-    public:
-      Console(STATE);
-      virtual ~Console();
-
-      Object* ruby_console() {
-        return ruby_console_.get();
-      }
-
-      std::string& console_path() {
-        return console_path_;
-      }
-
-      std::string& request_path() {
-        return request_path_;
-      }
-
-      std::string& response_path() {
-        return response_path_;
-      }
-
-      bool connected_p();
-
-      void reset();
-
-      void start(STATE);
-      void stop(STATE);
-      void after_fork_child(STATE);
-
-      void accept(STATE);
-      Class* server_class(STATE);
-    };
-
     class Listener : public MachineThread {
       Console* console_;
 
-      memory::TypedRoot<FSEvent*> fsevent_;
+      FSEvent* fsevent_;
 
       int fd_;
 
@@ -83,6 +39,8 @@ namespace rubinius {
       void initialize(STATE);
       void run(STATE);
       void wakeup(STATE);
+
+      void trace_objects(STATE, std::function<void (STATE, Object**)> f);
     };
 
     typedef std::list<char*> RequestList;
@@ -90,17 +48,17 @@ namespace rubinius {
     class Response : public MachineThread {
       Console* console_;
 
-      memory::TypedRoot<Channel*> inbox_;
-      memory::TypedRoot<Channel*> outbox_;
+      Channel* inbox_;
+      Channel* outbox_;
 
       int fd_;
 
       RequestList* request_list_;
 
-      utilities::thread::SpinLock list_lock_;
+      locks::spinlock_mutex list_lock_;
 
-      utilities::thread::Mutex response_lock_;
-      utilities::thread::Condition response_cond_;
+      std::mutex response_lock_;
+      std::condition_variable response_cond_;
 
     public:
 
@@ -118,7 +76,9 @@ namespace rubinius {
       void clear_requests();
 
       void send_request(STATE, const char* request);
-      void write_response(STATE, const char* response, native_int size);
+      void write_response(STATE, const char* response, intptr_t size);
+
+      void trace_objects(STATE, std::function<void (STATE, Object**)> f);
     };
 
     class Request : public MachineThread {
@@ -129,7 +89,7 @@ namespace rubinius {
 
       int fd_;
 
-      memory::TypedRoot<FSEvent*> fsevent_;
+      FSEvent* fsevent_;
 
     public:
 
@@ -149,8 +109,57 @@ namespace rubinius {
       void close_request();
 
       char* read_request(STATE);
+
+      void trace_objects(STATE, std::function<void (STATE, Object**)> f);
     };
   }
+
+  using namespace console;
+
+  class Console {
+    std::string console_path_;
+    std::string request_path_;
+    std::string response_path_;
+
+    Listener* listener_;
+    Response* response_;
+    Request* request_;
+
+    Object* ruby_console_;
+
+  public:
+    Console(STATE);
+    virtual ~Console();
+
+    Object* ruby_console() {
+      return ruby_console_;
+    }
+
+    std::string& console_path() {
+      return console_path_;
+    }
+
+    std::string& request_path() {
+      return request_path_;
+    }
+
+    std::string& response_path() {
+      return response_path_;
+    }
+
+    bool connected_p();
+
+    void reset();
+
+    void start(STATE);
+    void stop(STATE);
+    void after_fork_child(STATE);
+
+    void accept(STATE);
+    Class* server_class(STATE);
+
+    void trace_objects(STATE, std::function<void (STATE, Object**)> f);
+  };
 }
 
 #endif

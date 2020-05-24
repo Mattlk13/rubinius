@@ -2,8 +2,7 @@
 #include "capi/ruby.h"
 #include "capi/ruby/encoding.h"
 
-#include "vm.hpp"
-#include "state.hpp"
+#include "thread_state.hpp"
 #include "memory.hpp"
 
 #include "class/byte_array.hpp"
@@ -25,9 +24,9 @@ namespace rubinius {
   RString* MemoryHandle::get_rstring(STATE) {
     if(rstring_p()) {
       return reinterpret_cast<RString*>(data());
-    } else if(unknown_type_p()) {
+    } else if(object_type_p()) {
       String* string = c_as<String>(object());
-      string->set_type_specific(String::eRString);
+      string->set_type_specific(state, String::eRString);
       string->unshare(state);
 
       ByteArray* byte_array = string->data();
@@ -72,7 +71,7 @@ namespace rubinius {
       RString* rstring = reinterpret_cast<RString*>(data());
 
       ByteArray* byte_array = string->data();
-      if(!byte_array->pinned_p()) byte_array->set_pinned();
+      if(!byte_array->pinned_p()) byte_array->set_pinned(state);
 
       char* ptr = reinterpret_cast<char*>(byte_array->raw_bytes());
 
@@ -356,7 +355,7 @@ extern "C" {
     VALUE str = rb_string_value(object_variable);
     String* string = MemoryHandle::object<String>(str);
 
-    if(string->byte_size() != (native_int)strlen(string->c_str(env->state()))) {
+    if(string->byte_size() != (intptr_t)strlen(string->c_str(env->state()))) {
       rb_raise(rb_eArgError, "string contains NULL byte");
     }
 
@@ -617,7 +616,7 @@ extern "C" {
             "rb_vsprintf failed to allocate space for result"));
     }
 
-    native_int length = vsnprintf((char*)buffer, RBX_RB_VSPRINTF_LEN, format, varargs);
+    intptr_t length = vsnprintf((char*)buffer, RBX_RB_VSPRINTF_LEN, format, varargs);
     String* str = String::create_pinned(env->state(), (const char*)buffer, length);
 
     munmap(buffer, RBX_RB_VSPRINTF_LEN);

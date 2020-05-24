@@ -92,6 +92,7 @@ class Configure
     @encdir       = nil
     @runtimedir   = nil
     @codedbdir    = nil
+    @codetoolsdir = nil
     @stdlibdir    = nil
     @coredir      = nil
     @sitedir      = nil
@@ -128,7 +129,6 @@ class Configure
       "rake-12.3.0.gem",
       "rdoc-5.1.0.gem",
       "rb-readline-0.5.5.gem",
-      "rubysl-readline-2.0.2.gem",
       "test-unit-3.2.7.gem",
      ]
 
@@ -266,6 +266,7 @@ class Configure
     FileUtils.mkdir_p @builddir
 
     @bootstrap_gems_dir ||= "#{@sourcedir}/build/libraries/gems"
+    @codetoolsdir = "#{@sourcedir}/build/codetools"
     @stdlibdir = "#{@sourcedir}/build/stdlib"
   end
 
@@ -313,6 +314,17 @@ class Configure
 
     o.on "--debug-build", "Disable C++ optimizations and retain debugging symbols" do
       @debug_build = true
+    end
+
+    o.on "--sanitize", "SANITIZER", "Enable the Clang sanitizer: 'memory', 'address', 'undefined'" do |sanitizer|
+      if ["address", "memory", "undefined"].include?(sanitizer)
+        @debug_build = true
+        (@system_cxxflags ||= "") << " -fsanitize=#{sanitizer}  -fno-omit-frame-pointer -fno-optimize-sibling-calls "
+        @system_cxxflags << " -fsanitize-address-use-after-scope " if sanitizer == "address"
+        @system_cxxflags << " -fsanitize-memory-track-origins " if sanitizer == "memory"
+
+        (@system_ldflags ||= "") << " -g -fsanitize=#{sanitizer} "
+      end
     end
 
     o.on "--release-build", "Build from local files instead of accessing the network" do
@@ -473,7 +485,7 @@ class Configure
     feature "vendor-libsodium", true
     feature "alloc-tracking", false
     feature "dtrace", false
-    feature "rpath", true
+    feature "rpath", false
 
     o.doc "\n Help!"
 
@@ -760,11 +772,11 @@ not support #{name} compiler, please email contact@rubinius.com
       @llvm_generic_prebuilt  = "llvm-#{@llvm_version}-#{@host}.tar.bz2"
     end
 
-    @system_cflags =   ""
-    @system_cxxflags = "-std=c++11 "
-    @system_cppflags = ""
-    @system_incflags =  ""
-    @system_ldflags =  ""
+    @system_cflags    ||= ""
+    (@system_cxxflags ||= "") << "-std=c++14 "
+    @system_cppflags  ||= ""
+    @system_incflags  ||= ""
+    @system_ldflags   ||= ""
 
     @user_cflags =   ENV['CFLAGS']
     @user_cxxflags = ENV['CXXFLAGS']
@@ -921,6 +933,29 @@ not support #{name} compiler, please email contact@rubinius.com
     @sizeof[sizeof_typename(type)] or failure("Unknown type: '#{type}'.")
   end
 
+  def assert_sizeof
+    @log.print "Checking sizeof(intptr_t) == sizeof(int64_t): "
+
+    status = check_program do |f|
+      src = <<-EOP
+#include <stdint.h>
+
+int main(int argc, char* argv[]) {
+  return sizeof(intptr_t) == sizeof(int64_t);
+}
+      EOP
+      f.puts src
+      @log.log src
+    end
+
+    if status == 1
+      @log.write "yes"
+    else
+      @log.write "no"
+      failure "\nRubinius requires that sizeof(intptr_t) == sizeof(int64_t)"
+    end
+  end
+
   def detect_sizeof(type, includes=[])
     @log.print "Checking sizeof(#{type}): "
 
@@ -928,6 +963,7 @@ not support #{name} compiler, please email contact@rubinius.com
       src = includes.map { |include| "#include <#{include}>\n" }.join
       src += <<-EOP
 #include <stddef.h>
+#include <stdint.h>
 
 int main() { return sizeof(#{type}); }
       EOP
@@ -1474,9 +1510,13 @@ int main(int argc, char* argv[]) {
 
     @log.write ""
 
+    assert_sizeof
+
     detect_sizeof("short")
     detect_sizeof("int")
     detect_sizeof("void*")
+    detect_sizeof("intptr_t")
+    detect_sizeof("uintptr_t")
     detect_sizeof("size_t")
     detect_sizeof("long")
     detect_sizeof("long long")
@@ -1603,6 +1643,12 @@ int main(int argc, char* argv[]) {
       :llvm_ldflags       => @llvm_ldflags,
       :cc                 => @cc,
       :cxx                => @cxx,
+      :make               => @make,
+      :rake               => @rake,
+      :tar                => @tar,
+      :bzip               => @bzip,
+      :perl               => @perl,
+      :gem                => @gem,
       :ldshared           => @ldshared,
       :ldsharedxx         => @ldsharedxx,
       :gcc_major          => @gcc_major,
@@ -1625,7 +1671,18 @@ int main(int argc, char* argv[]) {
       :vendor             => @vendor,
       :os                 => @os,
       :little_endian      => @little_endian,
+      :sizeof_short       => sizeof("short"),
+      :sizeof_int         => sizeof("int"),
+      :sizeof_void_ptr    => sizeof("void*"),
+      :sizeof_intptr_t    => sizeof("intptr_t"),
+      :sizeof_uintptr_t   => sizeof("uintptr_t"),
+      :sizeof_size_t      => sizeof("size_t"),
       :sizeof_long        => sizeof("long"),
+      :sizeof_long_long   => sizeof("long long"),
+      :sizeof_float       => sizeof("float"),
+      :sizeof_double      => sizeof("double"),
+      :sizeof_off_t       => sizeof("off_t"),
+      :sizeof_time_t      => sizeof("time_t"),
       :x86_64             => @x86_64,
       :aarch64            => @aarch64,
       :dtrace             => @dtrace,
@@ -1645,6 +1702,8 @@ int main(int argc, char* argv[]) {
       :encdir             => @encdir,
       :runtimedir         => @runtimedir,
       :codedbdir          => @codedbdir,
+      :codetoolsdir       => @codetoolsdir,
+      :stdlibdir          => @stdlibdir,
       :coredir            => @coredir,
       :sitedir            => @sitedir,
       :archdir            => @archdir,
@@ -1851,11 +1910,6 @@ int main(int argc, char* argv[]) {
         f.puts "#define RBX_WINDOWS 1"
       end
     end
-
-    # Create C-API header for machine/test
-    File.open "machine/test/ruby.h", "w" do |f|
-      f.puts %[#include "#{@capi_includedir}/ruby.h"]
-    end
   end
 
   def print_debug
@@ -1976,10 +2030,9 @@ int main(int argc, char* argv[]) {
         download "#{url}#{cache_digest}", cache_digest
       end
 
-      if Digest::SHA512.file(cache_bzip).hexdigest ==
+      if Digest::SHA512.file(cache_bzip).hexdigest !=
           File.read(cache_digest).strip.split(" ").first
-        FileUtils.mkdir_p dir
-        system("#{@bzip} -c -d #{cache_bzip} > #{codedb_cache}")
+        failure "CodeDB cache SHA does not match"
       end
     end
   end
@@ -1991,7 +2044,7 @@ int main(int argc, char* argv[]) {
     cache_bzip = "#{stdlib_cache}.bz2"
     cache_digest = "#{cache_bzip}.sha512"
 
-    unless Dir.exist? @stdlibdir
+    unless File.file? cache_bzip
       url = "https://rubinius-binaries-rubinius-com.s3.amazonaws.com/stdlib/"
 
       unless File.file? cache_bzip
@@ -2002,11 +2055,34 @@ int main(int argc, char* argv[]) {
         download "#{url}#{cache_digest}", cache_digest
       end
 
-      if Digest::SHA512.file(cache_bzip).hexdigest ==
+      if Digest::SHA512.file(cache_bzip).hexdigest !=
           File.read(cache_digest).strip.split(" ").first
-        FileUtils.mkdir_p @stdlibdir
-        @log.write "#{@tar} -C #{@stdlibdir} -xzf #{@sourcedir}/#{cache_bzip}"
-        system("#{@tar} -C #{@stdlibdir} -xzf #{@sourcedir}/#{cache_bzip}")
+        failure "Stdlib cache SHA does not match"
+      end
+    end
+  end
+
+  def setup_codetools
+    @log.write "\nSetting up codetools..."
+
+    codetools_cache = "rubinius-codetools-cache"
+    cache_bzip = "#{codetools_cache}.bz2"
+    cache_digest = "#{cache_bzip}.sha512"
+
+    unless File.file? cache_bzip
+      url = "https://rubinius-binaries-rubinius-com.s3.amazonaws.com/codetools/"
+
+      unless File.file? cache_bzip
+        download "#{url}#{cache_bzip}", cache_bzip
+      end
+
+      unless File.file? cache_digest
+        download "#{url}#{cache_digest}", cache_digest
+      end
+
+      if Digest::SHA512.file(cache_bzip).hexdigest !=
+          File.read(cache_digest).strip.split(" ").first
+        failure "Codetools cache SHA does not match"
       end
     end
   end
@@ -2046,6 +2122,7 @@ int main(int argc, char* argv[]) {
     end
     setup_gems
     setup_codedb
+    setup_codetools
     setup_stdlib
     write_configure_files
     write_build_signature

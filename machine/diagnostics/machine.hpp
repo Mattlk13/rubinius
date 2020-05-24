@@ -9,7 +9,6 @@ namespace rubinius {
     public:
       metric fields_us;
       metric main_thread_us;
-      metric memory_us;
       metric ontology_us;
       metric platform_us;
 
@@ -17,7 +16,6 @@ namespace rubinius {
         : Diagnostic()
         , fields_us(0)
         , main_thread_us(0)
-        , memory_us(0)
         , ontology_us(0)
         , platform_us(0)
       {
@@ -27,7 +25,6 @@ namespace rubinius {
 
         document_.AddMember("fields.us", fields_us, alloc);
         document_.AddMember("main_thread.us", main_thread_us, alloc);
-        document_.AddMember("memory.us", memory_us, alloc);
         document_.AddMember("ontology.us", ontology_us, alloc);
         document_.AddMember("platform.us", platform_us, alloc);
       }
@@ -37,19 +34,18 @@ namespace rubinius {
 
         document_["fields.us"] = fields_us;
         document_["main_thread.us"] = main_thread_us;
-        document_["memory.us"] = memory_us;
         document_["ontology.us"] = ontology_us;
         document_["platform.us"] = platform_us;
       }
 
       virtual void start_reporting(STATE) {
-        if(state->shared().config.diagnostics_machine_enabled) {
+        if(state->configuration()->diagnostics_machine_enabled) {
           Diagnostic::start_reporting(state);
         }
       }
 
       virtual void stop_reporting(STATE) {
-        if(state->shared().config.diagnostics_machine_enabled) {
+        if(state->configuration()->diagnostics_machine_enabled) {
           Diagnostic::stop_reporting(state);
         }
       }
@@ -184,25 +180,26 @@ namespace rubinius {
         document_["fibers_destroyed"] = fibers_destroyed;
       }
 
-      void set_thread_info(VM* vm) {
+      void set_thread_info(ThreadState* thread_state) {
         rapidjson::Document::AllocatorType& alloc = document_.GetAllocator();
 
         document_["metadata"].AddMember("thread_name",
-            rapidjson::Value(vm->name().c_str(), vm->name().size(), alloc).Move(), alloc);
+            rapidjson::Value(thread_state->name().c_str(),
+              thread_state->name().size(), alloc).Move(), alloc);
         document_["metadata"].AddMember("thread_id",
-            rapidjson::Value().SetInt(vm->thread_id()).Move(), alloc);
+            rapidjson::Value().SetInt(thread_state->thread_id()).Move(), alloc);
       }
 
       virtual void start_reporting(STATE) {
-        if(state->shared().config.diagnostics_machine_enabled) {
+        if(state->configuration()->diagnostics_machine_enabled) {
           Diagnostic::start_reporting(state);
 
-          set_thread_info(state->vm());
+          set_thread_info(state);
         }
       }
 
       virtual void stop_reporting(STATE) {
-        if(state->shared().config.diagnostics_machine_enabled) {
+        if(state->configuration()->diagnostics_machine_enabled) {
           Diagnostic::stop_reporting(state);
         }
       }

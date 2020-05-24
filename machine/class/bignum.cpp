@@ -1,6 +1,7 @@
 #include "configuration.hpp"
 #include "object_utils.hpp"
 #include "memory.hpp"
+#include "primitives.hpp"
 
 #include "class/array.hpp"
 #include "class/class.hpp"
@@ -169,7 +170,7 @@ namespace rubinius {
 
   void Bignum::initialize(STATE, Bignum* obj) {
     mp_init_managed(state, obj->mp_val());
-    obj->set_frozen();
+    obj->set_frozen(state);
   }
 
   Bignum* Bignum::create(STATE) {
@@ -288,7 +289,7 @@ namespace rubinius {
     return Bignum::from(state, val->to_native());
   }
 
-  native_int Bignum::to_native() {
+  intptr_t Bignum::to_native() {
     return (mp_val()->sign == MP_NEG) ? -mp_get_long(mp_val()) : mp_get_long(mp_val());
   }
 
@@ -389,7 +390,7 @@ namespace rubinius {
 
   Integer* Bignum::add(STATE, Fixnum* b) {
     NMP;
-    native_int bi = b->to_native();
+    intptr_t bi = b->to_native();
     if(bi > 0) {
       mp_add_d(XST, mp_val(), bi, n);
     } else {
@@ -410,7 +411,7 @@ namespace rubinius {
 
   Integer* Bignum::sub(STATE, Fixnum* b) {
     NMP;
-    native_int bi = b->to_native();
+    intptr_t bi = b->to_native();
     if(bi > 0) {
       mp_sub_d(XST, mp_val(), bi, n);
     } else {
@@ -432,7 +433,7 @@ namespace rubinius {
   Integer* Bignum::mul(STATE, Fixnum* b) {
     NMP;
 
-    native_int bi = b->to_native();
+    intptr_t bi = b->to_native();
     if(bi == 2) {
       mp_mul_2(XST, mp_val(), n);
     } else {
@@ -463,7 +464,7 @@ namespace rubinius {
 
     NMP;
 
-    native_int bi  = denominator->to_native();
+    intptr_t bi  = denominator->to_native();
     mp_digit r;
     if(bi < 0) {
       mp_div_d(XST, mp_val(), -bi, n, &r);
@@ -474,9 +475,9 @@ namespace rubinius {
 
     if(remainder) {
       if(mp_val()->sign == MP_NEG) {
-        *remainder = Fixnum::from(-(native_int)r);
+        *remainder = Fixnum::from(-(intptr_t)r);
       } else {
-        *remainder = Fixnum::from((native_int)r);
+        *remainder = Fixnum::from((intptr_t)r);
       }
     }
 
@@ -628,7 +629,7 @@ namespace rubinius {
 
   Integer* Bignum::left_shift(STATE, Fixnum* bits) {
     NMP;
-    native_int shift = bits->to_native();
+    intptr_t shift = bits->to_native();
     if(shift < 0) {
       return right_shift(state, Fixnum::from(-bits->to_native()));
     }
@@ -642,7 +643,7 @@ namespace rubinius {
 
   Integer* Bignum::right_shift(STATE, Fixnum* bits) {
     NMP;
-    native_int shift = bits->to_native();
+    intptr_t shift = bits->to_native();
 
     if(shift < 0) {
       return left_shift(state, Fixnum::from(-bits->to_native()));
@@ -694,7 +695,7 @@ namespace rubinius {
         }
 
         if(!bit_inside_shift) {
-          native_int shift_mask = ((native_int)1 << (shift % DIGIT_BIT)) - 1;
+          intptr_t shift_mask = ((intptr_t)1 << (shift % DIGIT_BIT)) - 1;
           bit_inside_shift = (DIGIT(a, full_digits) & shift_mask);
         }
 
@@ -711,10 +712,10 @@ namespace rubinius {
   Object* Bignum::pow(STATE, Fixnum *exponent) {
     NMP;
 
-    native_int exp = exponent->to_native();
+    intptr_t exp = exponent->to_native();
 
     if(exp < 0) {
-      return Primitives::failure();
+      Exception::raise_argument_error(state, "exponent must be >= 0");
     }
 
     mp_expt_d(XST, mp_val(), exp, n);
@@ -735,7 +736,7 @@ namespace rubinius {
   }
 
   Object* Bignum::equal(STATE, Fixnum* b) {
-    native_int bi = b->to_native();
+    intptr_t bi = b->to_native();
     mp_int* a = mp_val();
     bool clear_a = false;
     mp_int n;
@@ -772,7 +773,7 @@ namespace rubinius {
   }
 
   Object* Bignum::compare(STATE, Fixnum* b) {
-    native_int bi = b->to_native();
+    intptr_t bi = b->to_native();
     mp_int* a = mp_val();
     if(bi < 0) {
       mp_int n;
@@ -823,7 +824,7 @@ namespace rubinius {
   }
 
   Object* Bignum::gt(STATE, Fixnum* b) {
-    native_int bi = b->to_native();
+    intptr_t bi = b->to_native();
 
     mp_int* a = mp_val();
     if(bi < 0) {
@@ -860,7 +861,7 @@ namespace rubinius {
   }
 
   Object* Bignum::ge(STATE, Fixnum* b) {
-    native_int bi = b->to_native();
+    intptr_t bi = b->to_native();
 
     mp_int* a = mp_val();
     if(bi < 0) {
@@ -895,7 +896,7 @@ namespace rubinius {
   }
 
   Object* Bignum::lt(STATE, Fixnum* b) {
-    native_int bi = b->to_native();
+    intptr_t bi = b->to_native();
 
     mp_int* a = mp_val();
     if(bi < 0) {
@@ -931,7 +932,7 @@ namespace rubinius {
   }
 
   Object* Bignum::le(STATE, Fixnum* b) {
-    native_int bi = b->to_native();
+    intptr_t bi = b->to_native();
 
     mp_int* a = mp_val();
     if(bi < 0) {
@@ -970,7 +971,7 @@ namespace rubinius {
   }
 
   String* Bignum::to_s(STATE, Fixnum* base) {
-    native_int b = base->to_native();
+    intptr_t b = base->to_native();
     mp_int* self = mp_val();
     if(b < 2 || b > 36) {
       Exception::raise_argument_error(state, "base must be between 2 and 36");
@@ -1054,7 +1055,7 @@ namespace rubinius {
       rest_i = rest->right_shift(state, Fixnum::from(32));
 
       if(rest_i->fixnum_p()) {
-        native_int rest_n = rest_i->to_native();
+        intptr_t rest_n = rest_i->to_native();
         if(rest_n == 0) break;
 
         rest = Bignum::from(state, rest_n);
@@ -1187,12 +1188,12 @@ namespace rubinius {
     mp_int* n = this->mp_val();
     assert(MANAGED(n));
     Object* m = static_cast<Object*>(n->managed);
-    return m->size_in_bytes(state->vm());
+    return m->size_in_bytes(state);
   }
 
   extern "C" void* MANAGED_REALLOC_MPINT(void* s, mp_int* a, size_t bytes) {
     assert(s);
-    State* state = reinterpret_cast<State*>(s);
+    ThreadState* state = reinterpret_cast<ThreadState*>(s);
 
     ByteArray* storage =
       state->memory()->new_bytes_pinned<ByteArray>(state, G(bytearray), bytes);

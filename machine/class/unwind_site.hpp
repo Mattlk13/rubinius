@@ -2,7 +2,7 @@
 #define RBX_CLASS_UNWIND_SITE_HPP
 
 #include "class/object.hpp"
-#include "vm.hpp"
+#include "thread_state.hpp"
 
 #include <atomic>
 #include <stdint.h>
@@ -53,6 +53,11 @@ namespace rubinius {
     }
 
     static UnwindSite* create(STATE, int ip, UnwindType unwind_type);
+
+    void finalize(STATE) {
+      delete[] _caches_;
+      _caches_ = nullptr;
+    }
 
     class Info : public TypeInfo {
       public:

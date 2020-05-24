@@ -116,7 +116,7 @@ class Thread
 
   def wakeup
     Rubinius.primitive :thread_wakeup
-    Kernel.raise ThreadError, "Thread#wakeup primitive failed, thread may be dead"
+    Kernel.raise PrimitiveFailure, "Thread#wakeup primitive failed"
   end
 
   def priority
@@ -160,45 +160,24 @@ class Thread
   end
 
   def inspect
-    stat = status()
-    stat = "dead" unless stat
-
     str = "#<#{self.class}:0x#{object_id.to_s(16)} id=#{@thread_id} pid=#{@pid}"
     str << " source=#{@source}" if @source
-    str << " status=#{stat || "dead"}"
+    str << " status=#{status || "dead"}"
     str << ">"
   end
 
   alias_method :to_s, :inspect
 
   def alive?
-    Rubinius.synchronize(self) do
-      @alive
-    end
+    Rubinius::Mirror.reflect(self).alive?
   end
 
   def stop?
-    !alive? || sleeping?
-  end
-
-  def sleeping?
-    Rubinius.synchronize(self) do
-      @sleep
-    end
+    Rubinius::Mirror.reflect(self).stop?
   end
 
   def status
-    if @alive
-      if @sleep
-        "sleep"
-      else
-        "run"
-      end
-    elsif @exception
-      nil
-    else
-      false
-    end
+    Rubinius::Mirror.reflect(self).status
   end
 
   def join(timeout=undefined)
@@ -222,35 +201,28 @@ class Thread
   end
 
   def raise(exc=undefined, msg=nil, trace=nil)
-    Rubinius.synchronize(self) do
-      return self unless @alive
+    return self unless alive?
 
-      if undefined.equal? exc
-        no_argument = true
-        exc = active_exception
-      end
+    if exc.respond_to? :exception
+      exc = exc.exception msg
+      Kernel.raise TypeError, 'exception class/object expected' unless Exception === exc
+      exc.set_backtrace trace if trace
+    elsif undefined.equal? exc
+      exc = RuntimeError.exception nil
+    elsif exc.kind_of? String
+      exc = RuntimeError.exception exc
+    else
+      Kernel.raise TypeError, 'exception class/object expected'
+    end
 
-      if exc.respond_to? :exception
-        exc = exc.exception msg
-        Kernel.raise TypeError, 'exception class/object expected' unless Exception === exc
-        exc.set_backtrace trace if trace
-      elsif no_argument
-        exc = RuntimeError.exception nil
-      elsif exc.kind_of? String
-        exc = RuntimeError.exception exc
-      else
-        Kernel.raise TypeError, 'exception class/object expected'
-      end
+    if $DEBUG
+      STDERR.puts "Exception: #{exc.message} (#{exc.class})"
+    end
 
-      if $DEBUG
-        STDERR.puts "Exception: #{exc.message} (#{exc.class})"
-      end
-
-      if self == Thread.current
-        Kernel.raise exc
-      else
-        Rubinius.invoke_primitive :thread_raise, self, exc
-      end
+    if self == Thread.current
+      Kernel.raise exc
+    else
+      Rubinius.invoke_primitive :thread_raise, self, exc
     end
   end
 
@@ -294,35 +266,6 @@ class Thread
     raise PrimitiveFailure, "Thread#keys primitive failed"
   end
 
-  # Register another Thread object +thr+ as the Thread where the debugger
-  # is running. When the current thread hits a breakpoint, it uses this
-  # field to figure out who to send variable/scope information to.
-  #
-  def set_debugger_thread(thr)
-    raise TypeError, "Must be another Thread" unless thr.kind_of?(Thread)
-
-    @debugger_thread = thr
-  end
-
-  # Called by a debugger thread (a thread where the debugger lives) to
-  # setup the @control_channel to a Channel object. A debuggee thread
-  # will send data to this Channel when it hits a breakpoint, allowing
-  # an easy place for the debugger to wait.
-  #
-  # This channel is sent a Tuple containing:
-  #  * The object registered in the breakpoint (can be any object)
-  #  * The Thread object where the breakpoint was hit
-  #  * A Channel object to use to wake up the debuggee thread
-  #  * An Array of Rubinius::Location objects for the stack. These Location
-  #    objects contain references to Rubinius::VariableScope objects
-  #    which contain info like local variables.
-  #
-  def setup_control!(chan=nil)
-    chan ||= Rubinius::Channel.new
-    @control_channel = chan
-    return chan
-  end
-
   def self.main
     @main_thread
   end
@@ -342,11 +285,7 @@ class Thread
   alias_method :run, :wakeup
 
   def kill
-    @sleep = false
-    Rubinius.synchronize(self) do
-      Rubinius.invoke_primitive :thread_kill, self
-    end
-    self
+    Rubinius.invoke_primitive :thread_kill, self
   end
 
   alias_method :exit, :kill
@@ -355,10 +294,6 @@ class Thread
   def value
     join
     @value
-  end
-
-  def active_exception
-    nil
   end
 
   def self.exclusive

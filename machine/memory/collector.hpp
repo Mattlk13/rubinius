@@ -1,9 +1,9 @@
 #ifndef RBX_MEMORY_COLLECTOR_HPP
 #define RBX_MEMORY_COLLECTOR_HPP
 
-#include "machine_threads.hpp"
+#include "machine_thread.hpp"
 #include "logger.hpp"
-#include "state.hpp"
+#include "thread_state.hpp"
 
 #include "memory/header.hpp"
 #include "memory/root.hpp"
@@ -16,8 +16,7 @@
 #include <unordered_set>
 
 namespace rubinius {
-  class VM;
-  class State;
+  class ThreadState;
   class Memory;
   class Object;
   struct CallFrame;
@@ -45,7 +44,7 @@ namespace rubinius {
       }
 
       virtual void dispose(STATE) = 0;
-      virtual void finalize(STATE) = 0;
+      virtual void finalize(STATE);
       virtual void mark(STATE, MemoryTracer* tracer) = 0;
       virtual bool match_p(STATE, Object* object, Object* finalizer) = 0;
     };
@@ -98,7 +97,7 @@ namespace rubinius {
     typedef std::unordered_set<MemoryHeader*> References;
     typedef std::unordered_set<MemoryHeader*> Weakrefs;
 
-    typedef std::list<MemoryHeader*> MemoryHandles;
+    typedef std::list<ExtendedHeader*> MemoryHeaders;
     typedef std::list<FinalizerObject*> Finalizers;
 
     class Collector {
@@ -116,7 +115,7 @@ namespace rubinius {
 
       public:
         Inhibit(STATE)
-          : collector_(state->shared().collector())
+          : collector_(state->collector())
         {
           collector_->inhibit_collection();
         }
@@ -142,7 +141,6 @@ namespace rubinius {
         void initialize(STATE);
         void stop(STATE);
         void wakeup(STATE);
-        void after_fork_child(STATE);
         void run(STATE);
       };
 
@@ -152,8 +150,8 @@ namespace rubinius {
       Finalizers finalizer_list_;
       Finalizers process_list_;
 
-      MemoryHandles memory_handles_list_;
-      locks::spinlock_mutex memory_handles_lock_;
+      MemoryHeaders memory_headers_list_;
+      locks::spinlock_mutex memory_headers_lock_;
 
       References references_set_;
       locks::spinlock_mutex references_lock_;
@@ -171,7 +169,7 @@ namespace rubinius {
       std::atomic<bool> collect_requested_;
 
     public:
-      Collector(STATE);
+      Collector();
       virtual ~Collector();
 
       std::mutex& list_mutex() {
@@ -182,8 +180,8 @@ namespace rubinius {
         return list_condition_;
       }
 
-      MemoryHandles& memory_handles() {
-        return memory_handles_list_;
+      MemoryHeaders& memory_headers() {
+        return memory_headers_list_;
       }
 
       References& references() {
@@ -194,12 +192,10 @@ namespace rubinius {
         return weakrefs_set_;
       }
 
-      void add_memory_handle(MemoryHeader* header) {
-        if(header->reference_p()) {
-          std::lock_guard<locks::spinlock_mutex> guard(memory_handles_lock_);
+      void add_memory_header(ExtendedHeader* header) {
+        std::lock_guard<locks::spinlock_mutex> guard(memory_headers_lock_);
 
-          memory_handles_list_.push_back(header);
-        }
+        memory_headers_list_.push_back(header);
       }
 
       void add_reference(MemoryHeader* header) {
@@ -279,6 +275,8 @@ namespace rubinius {
 
       void collect(STATE);
       void stop_for_collection(STATE, std::function<void ()> process);
+
+      void after_fork_child(STATE);
     };
   }
 }

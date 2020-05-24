@@ -1,3 +1,4 @@
+#include "c_api.hpp"
 #include "arguments.hpp"
 #include "call_frame.hpp"
 #include "configuration.hpp"
@@ -23,13 +24,12 @@
 #include "dtrace/dtrace.h"
 
 namespace rubinius {
-  /** Thread-local NativeMethodEnvironment instance. */
-  utilities::thread::ThreadData<NativeMethodEnvironment*> native_method_environment;
+  static thread_local NativeMethodEnvironment* native_method_environment = nullptr;
 
 /* Class methods */
 
   NativeMethodEnvironment::NativeMethodEnvironment(STATE)
-    : state_(state->vm())
+    : state_(state)
     , current_call_frame_(0)
     , current_native_frame_(0)
     , current_ep_(0)
@@ -38,7 +38,7 @@ namespace rubinius {
   {}
 
   NativeMethodEnvironment* NativeMethodEnvironment::get() {
-    return native_method_environment.get();
+    return native_method_environment;
   }
 
   NativeMethodFrame::NativeMethodFrame(NativeMethodEnvironment* env, NativeMethodFrame* prev, NativeMethod* method)
@@ -57,7 +57,7 @@ namespace rubinius {
   }
 
   StackVariables* NativeMethodEnvironment::scope() {
-    if(CallFrame* frame = state()->vm()->get_scope_frame()) {
+    if(CallFrame* frame = state()->get_scope_frame()) {
       return frame->scope;
     }
 
@@ -84,14 +84,14 @@ namespace rubinius {
 
   void NativeMethod::init_thread(STATE) {
     NativeMethodEnvironment* env = new NativeMethodEnvironment(state);
-    native_method_environment.set(env);
-    state->vm()->native_method_environment = env;
+    native_method_environment = env;
+    state->native_method_environment = env;
   }
 
   void NativeMethod::cleanup_thread(STATE) {
-    delete state->vm()->native_method_environment;
-    state->vm()->native_method_environment = NULL;
-    native_method_environment.set(NULL);
+    delete state->native_method_environment;
+    state->native_method_environment = nullptr;
+    native_method_environment = nullptr;
   }
 
   /**
@@ -527,10 +527,13 @@ namespace rubinius {
       return NULL;
     }
 
-    NativeMethodEnvironment* env = state->vm()->native_method_environment;
+    NativeMethodEnvironment* env = state->native_method_environment;
 
     NativeMethodFrame nmf(env, env->current_native_frame(), nm);
-    CallFrame* call_frame = ALLOCA_CALL_FRAME(0);
+
+    uintptr_t* mem = ALLOCA_CALL_FRAME(0);
+    CallFrame* call_frame = new(mem) CallFrame();
+
     call_frame->lexical_scope_ = nullptr;
     call_frame->dispatch_data = (void*)&nmf;
     call_frame->compiled_code = nullptr;
@@ -545,7 +548,7 @@ namespace rubinius {
     env->set_current_native_frame(&nmf);
 
     // Register the CallFrame, because we might GC below this.
-    if(!state->vm()->push_call_frame(state, call_frame)) {
+    if(!state->push_call_frame(state, call_frame)) {
       return NULL;
     }
 
@@ -578,7 +581,7 @@ namespace rubinius {
     } catch(const RubyException& exc) {
       LEAVE_CAPI(state);
 
-      state->vm()->pop_call_frame(state, call_frame->previous);
+      state->pop_call_frame(state, call_frame->previous);
       env->set_current_call_frame(saved_frame);
       env->set_current_native_frame(nmf.previous());
       ep.pop(env);
@@ -588,7 +591,7 @@ namespace rubinius {
 
     LEAVE_CAPI(state);
 
-    if(!state->vm()->pop_call_frame(state, call_frame->previous)) {
+    if(!state->pop_call_frame(state, call_frame->previous)) {
       value = NULL;
     }
 
@@ -603,7 +606,7 @@ namespace rubinius {
       String* library, Symbol* name, Pointer* ptr) {
     void* func = ptr->pointer;
 
-    int lock_index = state->shared().capi_lock_index(name->debug_str(state));
+    int lock_index = state->c_api()->capi_lock_index(name->debug_str(state));
 
     return NativeMethod::create(state, library, G(rubinius),
                                 name, func,
@@ -611,7 +614,7 @@ namespace rubinius {
                                 lock_index);
   }
 
-  NativeMethod* NativeMethod::create(State* state, String* file_name, Module* module,
+  NativeMethod* NativeMethod::create(STATE, String* file_name, Module* module,
       Symbol* method_name, void* func, Fixnum* arity, int lock_index)
   {
     NativeMethod* nmethod =

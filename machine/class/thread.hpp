@@ -12,7 +12,6 @@
 #include "class/randomizer.hpp"
 
 #include <list>
-#include <mutex>
 
 namespace rubinius {
   class Array;
@@ -30,11 +29,7 @@ namespace rubinius {
 
     attr_accessor(args, Array);
     attr_accessor(block, Object);
-    attr_accessor(alive, Object);
-    attr_accessor(sleep, Object);
-    attr_accessor(control_channel, Channel);
     attr_accessor(recursive_objects, LookupTable);
-    attr_accessor(debugger_thread, Thread);
     attr_accessor(thread_id, Fixnum);
     attr_accessor(randomizer, Randomizer);
     attr_accessor(locals, LookupTable);
@@ -52,13 +47,7 @@ namespace rubinius {
     attr_accessor(fiber_value, Object);
 
   private:
-    utilities::thread::SpinLock lock_;
-    utilities::thread::Mutex join_lock_;
-    utilities::thread::Condition join_cond_;
-    std::mutex fiber_mutex_;
-
-    /// The VM state for this thread and this thread alone
-    attr_field(vm, VM*);
+    attr_field(thread_state, ThreadState*);
 
     typedef Object* (*ThreadFunction)(STATE);
 
@@ -69,11 +58,7 @@ namespace rubinius {
     static void initialize(STATE, Thread* obj) {
       obj->args(nil<Array>());
       obj->block(cNil);
-      obj->alive(cTrue);
-      obj->sleep(cFalse);
-      obj->control_channel(nil<Channel>());
       obj->recursive_objects(state, LookupTable::create(state));
-      obj->debugger_thread(nil<Thread>());
       obj->thread_id(nil<Fixnum>());
       obj->randomizer(nil<Randomizer>());
       obj->locals(state, LookupTable::create(state));
@@ -84,23 +69,12 @@ namespace rubinius {
       obj->priority(Fixnum::from(0));
       obj->pid(Fixnum::from(0));
       obj->initialized(cFalse);
-      obj->stack_size(Fixnum::from(state->shared().config.machine_thread_stack_size.value));
+      obj->stack_size(Fixnum::from(state->configuration()->machine_thread_stack_size.value));
       obj->source(nil<String>());
       obj->fiber(nil<Fiber>());
       obj->current_fiber(nil<Fiber>());
       obj->fiber_value(nil<Object>());
-
-      obj->lock_.init();
-      obj->join_lock_.init();
-      obj->join_cond_.init();
-
-      new(&obj->fiber_mutex_) std::mutex;
-
-      obj->vm(0);
-    }
-
-    std::mutex& fiber_mutex() {
-      return fiber_mutex_;
+      obj->thread_state(nullptr);
     }
 
   public:
@@ -176,6 +150,9 @@ namespace rubinius {
     // Rubinius.primitive :thread_set_priority
     Object* set_priority(STATE, Fixnum* priority);
 
+    // Rubinius.primitive :thread_suspend
+    Object* suspend(STATE, Object* duration);
+
     /**
      *  Schedule Thread to be run.
      *
@@ -222,7 +199,8 @@ namespace rubinius {
     // Rubinius.primitive :thread_variables
     Array* variables(STATE);
 
-    void stopped();
+    // Rubinius.primitive :thread_status
+    Object* status(STATE);
 
     /**
      *  Create a Thread object.
@@ -234,18 +212,17 @@ namespace rubinius {
      *
      *  @see  Thread::allocate().
      */
-    static Thread* create(STATE, VM* vm);
-    static Thread* create(STATE, VM* vm, ThreadFunction function);
+    static Thread* create(STATE, ThreadState* thread_state);
+    static Thread* create(STATE, ThreadState* thread_state, ThreadFunction function);
     static Thread* create(STATE, Object* self, ThreadFunction function);
-    static Thread* create(STATE, Object* self, VM* vm, ThreadFunction function);
-    static Thread* create(STATE, Class* klass, VM* vm);
+    static Thread* create(STATE, Object* self, ThreadState* thread_state, ThreadFunction function);
+    static Thread* create(STATE, Class* klass, ThreadState* thread_state);
 
+    static void stop(STATE, ThreadState* thread);
     static void finalize(STATE, Thread* thread);
 
     int start_thread(STATE, void* (*function)(void*));
     static void* run(void*);
-
-    static Object* main_thread(STATE);
 
   public:   /* TypeInfo */
 

@@ -25,7 +25,6 @@ namespace rubinius {
 
     void read_rarray();
     void write_rarray(STATE);
-    void write_rarray(VM* vm);
 
     Fixnum* total() {
       if(type_specific() == eRArray) {
@@ -95,8 +94,8 @@ namespace rubinius {
       }
     }
 
-    native_int size();
-    native_int offset();
+    intptr_t size();
+    intptr_t offset();
 
     static void bootstrap(STATE);
     static void initialize(STATE, Array* array) {
@@ -105,7 +104,7 @@ namespace rubinius {
       array->start(Fixnum::from(0));
     }
 
-    static Array* create(STATE, native_int size);
+    static Array* create(STATE, intptr_t size);
     static Array* from_tuple(STATE, Tuple* tup);
     static Array* to_ary(STATE, Object* obj);
 
@@ -133,8 +132,8 @@ namespace rubinius {
     // Rubinius.primitive :array_pack
     String* pack(STATE, String* directives);
 
-    Object* get(STATE, native_int idx);
-    Object* set(STATE, native_int idx, Object* val);
+    Object* get(STATE, intptr_t idx);
+    Object* set(STATE, intptr_t idx, Object* val);
     void   unshift(STATE, Object* val);
     Object* shift(STATE);
     Object* append(STATE, Object* val);

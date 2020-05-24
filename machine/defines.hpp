@@ -23,16 +23,12 @@ namespace rubinius {
   class Class;
   class Fixnum;
   class ObjectHeader;
-  class State;
+  class ThreadState;
   class Symbol;
 
-  /** Platform-dependent integer type large enough for pointers too. */
-  typedef intptr_t native_int;
-  typedef uintptr_t native_uint;
+  typedef intptr_t hashval;
 
-  typedef native_int hashval;
-
-  #define STATE rubinius::State* state
+  #define STATE rubinius::ThreadState* state
   #define G(whatever) state->globals().whatever.get()
   #define GO(whatever) state->globals().whatever
 

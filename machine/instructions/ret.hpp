@@ -16,6 +16,8 @@ namespace rubinius {
         }
       }
 
+      call_frame->return_value = obj;
+
       return reinterpret_cast<intptr_t>(obj);
     }
   }

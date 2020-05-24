@@ -1,7 +1,6 @@
 #include "util/file.hpp"
 
 #include "logger.hpp"
-#include "vm.hpp"
 #include "thread_phase.hpp"
 
 #include <stdarg.h>
@@ -20,7 +19,9 @@
 
 #include <zlib.h>
 
-#include <ostream>
+#include <chrono>
+#include <sstream>
+#include <thread>
 
 namespace rubinius {
   namespace logger {
@@ -378,7 +379,7 @@ namespace rubinius {
     }
 
     void FileLogger::SemaphoreLock::lock() {
-      uint64_t nanoseconds = 0;
+      int nanoseconds = 0;
 
       while(sem_trywait(semaphore_) != 0) {
         switch(errno) {
@@ -400,10 +401,11 @@ namespace rubinius {
             472, 288, 131, 31, 435, 258, 221, 73, 537, 854
           };
           static int modulo = sizeof(delay) / sizeof(int);
-          static struct timespec ts = {0, 0};
 
-          nanoseconds += ts.tv_nsec = delay[i++ % modulo];
-          nanosleep(&ts, NULL);
+          int ns = delay[i++ % modulo];
+          std::this_thread::sleep_for(std::chrono::nanoseconds(ns));
+
+          nanoseconds += ns;
 
           if(nanoseconds > cLockLimit * 2) {
             logger::abort("logger: possible invalid semaphore state detected, unable to reset");

@@ -10,6 +10,8 @@
 #include "class/tuple.hpp"
 #include "class/thread.hpp"
 
+#include <mutex>
+
 #define CONSTANT_TABLE_MAX_DENSITY 0.75
 #define CONSTANT_TABLE_MIN_DENSITY 0.3
 
@@ -27,7 +29,7 @@ namespace rubinius {
         Class::bootstrap_class(state, G(object), ConstantTableBucketType));
   }
 
-  ConstantTable* ConstantTable::create(STATE, native_int size) {
+  ConstantTable* ConstantTable::create(STATE, intptr_t size) {
     ConstantTable *tbl;
 
     tbl = state->memory()->new_object<ConstantTable>(state, G(constant_table));
@@ -36,7 +38,7 @@ namespace rubinius {
     return tbl;
   }
 
-  void ConstantTable::setup(STATE, native_int size) {
+  void ConstantTable::setup(STATE, intptr_t size) {
     if(size > 0) {
       values(state, Tuple::create(state, size));
       bins(state, Fixnum::from(size));
@@ -47,22 +49,22 @@ namespace rubinius {
   ConstantTable* ConstantTable::allocate(STATE, Object* self) {
     ConstantTable* tbl = create(state);
     tbl->klass(state, as<Class>(self));
-    tbl->lock_.init();
+    new(&tbl->lock_) locks::spinlock_mutex;
     return tbl;
   }
 
   ConstantTable* ConstantTable::duplicate(STATE) {
-    utilities::thread::SpinLock::LockGuard lg(lock_);
+    std::lock_guard<locks::spinlock_mutex> lg(lock_);
 
-    native_int size = bins()->to_native();
+    intptr_t size = bins()->to_native();
     ConstantTable* dup = ConstantTable::create(state, size);
 
     // Allow for subclassing.
     dup->klass(state, class_object(state));
 
-    native_int num = bins()->to_native();
+    intptr_t num = bins()->to_native();
 
-    for(native_int i = 0; i < num; i++) {
+    for(intptr_t i = 0; i < num; i++) {
       ConstantTableBucket* entry = try_as<ConstantTableBucket>(
           table_values(state)->at(state, i));
 
@@ -75,11 +77,11 @@ namespace rubinius {
     return dup;
   }
 
-  void ConstantTable::redistribute(STATE, native_int size) {
-    native_int num = bins()->to_native();
+  void ConstantTable::redistribute(STATE, intptr_t size) {
+    intptr_t num = bins()->to_native();
     Tuple* new_values = Tuple::create(state, size);
 
-    for(native_int i = 0; i < num; i++) {
+    for(intptr_t i = 0; i < num; i++) {
       ConstantTableBucket* entry = try_as<ConstantTableBucket>(
           table_values(state)->at(state, i));
 
@@ -87,7 +89,7 @@ namespace rubinius {
         ConstantTableBucket* link = try_as<ConstantTableBucket>(entry->next());
         entry->next(state, nil<ConstantTableBucket>());
 
-        native_int bin = find_bin(key_hash(entry->name()), size);
+        intptr_t bin = find_bin(key_hash(entry->name()), size);
         ConstantTableBucket* slot = try_as<ConstantTableBucket>(new_values->at(state, bin));
 
         if(slot) {
@@ -116,19 +118,19 @@ namespace rubinius {
   Object* ConstantTable::store(STATE, Symbol* name, Object* constant, Symbol* vis) {
     check_frozen(state);
 
-    utilities::thread::SpinLock::LockGuard lg(lock_);
+    std::lock_guard<locks::spinlock_mutex> lg(lock_);
 
     Tuple* values = table_values(state);
 
-    native_int num_entries = entries()->to_native();
-    native_int num_bins = bins()->to_native();
+    intptr_t num_entries = entries()->to_native();
+    intptr_t num_bins = bins()->to_native();
 
     if(max_density_p(num_entries, num_bins)) {
       redistribute(state, num_bins <<= 1);
       values = table_values(state);
     }
 
-    native_int bin = find_bin(key_hash(name), num_bins);
+    intptr_t bin = find_bin(key_hash(name), num_bins);
 
     ConstantTableBucket* entry = try_as<ConstantTableBucket>(values->at(state, bin));
     ConstantTableBucket* last = NULL;
@@ -155,11 +157,11 @@ namespace rubinius {
   }
 
   ConstantTableBucket* ConstantTable::find_entry(STATE, Symbol* name) {
-    utilities::thread::SpinLock::LockGuard lg(lock_);
+    std::lock_guard<locks::spinlock_mutex> lg(lock_);
 
     if(bins()->to_native() == 0) return 0;
 
-    native_int bin = find_bin(key_hash(name), bins()->to_native());
+    intptr_t bin = find_bin(key_hash(name), bins()->to_native());
     ConstantTableBucket *entry = try_as<ConstantTableBucket>(
         table_values(state)->at(state, bin));
 
@@ -184,17 +186,17 @@ namespace rubinius {
   Object* ConstantTable::remove(STATE, Symbol* name) {
     check_frozen(state);
 
-    utilities::thread::SpinLock::LockGuard lg(lock_);
+    std::lock_guard<locks::spinlock_mutex> lg(lock_);
 
-    native_int num_entries = entries()->to_native();
-    native_int num_bins = bins()->to_native();
+    intptr_t num_entries = entries()->to_native();
+    intptr_t num_bins = bins()->to_native();
 
     if(min_density_p(num_entries, num_bins) &&
          (num_bins >> 1) >= CONSTANT_TABLE_MIN_SIZE) {
       redistribute(state, num_bins >>= 1);
     }
 
-    native_int bin = find_bin(key_hash(name), num_bins);
+    intptr_t bin = find_bin(key_hash(name), num_bins);
     ConstantTableBucket* entry = try_as<ConstantTableBucket>(
         table_values(state)->at(state, bin));
     ConstantTableBucket* last = NULL;
@@ -227,13 +229,13 @@ namespace rubinius {
   }
 
   Array* ConstantTable::all_keys(STATE) {
-    utilities::thread::SpinLock::LockGuard lg(lock_);
+    std::lock_guard<locks::spinlock_mutex> lg(lock_);
 
     Array* ary = Array::create(state, entries()->to_native());
 
-    native_int num_bins = bins()->to_native();
+    intptr_t num_bins = bins()->to_native();
 
-    for(native_int i = 0; i < num_bins; i++) {
+    for(intptr_t i = 0; i < num_bins; i++) {
       ConstantTableBucket* entry = try_as<ConstantTableBucket>(
           table_values(state)->at(state, i));
 
@@ -247,7 +249,7 @@ namespace rubinius {
 
   void ConstantTable::Info::show(STATE, Object* self, int level) {
     ConstantTable* tbl = as<ConstantTable>(self);
-    native_int size = tbl->bins()->to_native();
+    intptr_t size = tbl->bins()->to_native();
 
     if(size == 0) {
       class_info(state, self, true);
@@ -257,7 +259,7 @@ namespace rubinius {
     class_info(state, self);
     std::cout << ": " << size << std::endl;
     indent(++level);
-    for(native_int i = 0; i < size; i++) {
+    for(intptr_t i = 0; i < size; i++) {
       ConstantTableBucket* entry = try_as<ConstantTableBucket>(tbl->values()->at(state, i));
 
       bool entries = false;

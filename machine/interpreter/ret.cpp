@@ -3,9 +3,11 @@
 namespace rubinius {
   namespace interpreter {
     intptr_t ret(STATE, CallFrame* call_frame, intptr_t const opcodes[]) {
-      state->vm()->checkpoint(state);
+      intptr_t value = instructions::ret(state, call_frame);
 
-      return instructions::ret(state, call_frame);
+      state->checkpoint(state);
+
+      return value;
     }
   }
 }

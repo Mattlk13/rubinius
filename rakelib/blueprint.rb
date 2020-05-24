@@ -76,6 +76,7 @@ Daedalus.blueprint do |i|
   end
 
   files = i.source_files "machine/*.{cpp,c}", *subdirs
+  files.delete_if { |f| %r[.*machine/main.cpp] =~ f.path }
 
   Dir["machine/interpreter/*.cpp"].each do |name|
     files << InstructionSourceFile.new(name)
@@ -273,24 +274,9 @@ Daedalus.blueprint do |i|
   gcc.cflags << "-D_LARGEFILE_SOURCE"
   gcc.cflags << "-D_FILE_OFFSET_BITS=64"
 
-  cli = files.dup
-  cli << i.source_file("machine/drivers/cli.cpp")
+  program = files.dup
+  program << i.source_file("machine/main.cpp")
 
   exe = RUBY_PLATFORM =~ /mingw|mswin/ ? 'machine/vm.exe' : 'machine/vm'
-  i.program exe, *cli
-
-  test_files = files.dup
-  test_files << i.source_file("machine/test/runner.cpp") { |f|
-    tests = Dir["machine/test/**/test_*.hpp"].sort
-
-    f.depends_on tests
-
-    f.autogenerate do |x|
-      x.command("#{perl} machine/test/cxxtest/cxxtestgen.pl --error-printer --have-eh " +
-        "--abort-on-fail -include=machine/test/test_setup.h -o machine/test/runner.cpp " +
-        tests.join(' '))
-    end
-  }
-
-  i.program "machine/test/runner", *test_files
+  i.program exe, *program
 end

@@ -7,6 +7,7 @@
 #include "capi/capi.hpp"
 #include "capi/ruby.h"
 
+#include "c_api.hpp"
 #include "on_stack.hpp"
 #include "call_frame.hpp"
 #include "exception_point.hpp"
@@ -19,6 +20,7 @@
 #include "class/string.hpp"
 #include "class/symbol.hpp"
 #include "class/thread.hpp"
+#include "class/unwind_state.hpp"
 
 #include "windows_compat.h"
 
@@ -63,7 +65,7 @@ extern "C" {
         ret = select(max, read, write, except, tvp);
       }
 
-      bool ok = !env->state()->vm()->thread_interrupted_p(env->state());
+      bool ok = !env->state()->thread_interrupted_p();
 
       ENTER_CAPI(env->state());
 
@@ -75,10 +77,10 @@ extern "C" {
         // Only handle true exceptions being raised, eat all other requests
         // for now.
 
-        if(env->state()->thread_state()->raise_reason() == cException) {
-          capi::capi_raise_backend(env->state()->thread_state()->current_exception());
+        if(env->state()->unwind_state()->raise_reason() == cException) {
+          capi::capi_raise_backend(env->state()->unwind_state()->current_exception());
         } else {
-          env->state()->thread_state()->clear();
+          env->state()->unwind_state()->clear();
         }
       }
 
@@ -98,7 +100,7 @@ extern "C" {
 
   VALUE rb_thread_current(void) {
     NativeMethodEnvironment* env = NativeMethodEnvironment::get();
-    Thread* thread = env->state()->vm()->thread();
+    Thread* thread = env->state()->thread();
 
     return MemoryHandle::value(thread);
   }
@@ -130,52 +132,16 @@ extern "C" {
     return rb_funcall(thread, rb_intern("wakeup"), 0);
   }
 
-  // THAR BE DRAGONS.
-  //
-  // When venturing through the valleys of the unmanaged, our hero must
-  // remain vigilant and disciplined! If she should ever find a VALUE for
-  // a reference in her travels: Look away! For these VALUEs are pure
-  // death! Our hero must steel herself and continue on her quest, returning
-  // as soon as possible to the castle of the managed.
-  VALUE rb_thread_blocking_region(rb_blocking_function_t func, void* data,
-                                  rb_unblock_function_t ubf, void* ubf_data) {
-    NativeMethodEnvironment* env = NativeMethodEnvironment::get();
-    State* state = env->state();
-    VALUE ret = Qnil;
-
-    if(ubf == RUBY_UBF_IO || ubf == RUBY_UBF_PROCESS) {
-      state->vm()->interrupt_with_signal();
-    } else {
-      state->vm()->wait_on_custom_function(env->state(), ubf, ubf_data);
-    }
-    LEAVE_CAPI(env->state());
-    {
-      UnmanagedPhase unmanaged(env->state());
-      ret = (*func)(data);
-    }
-    ENTER_CAPI(env->state());
-    state->vm()->clear_waiter();
-
-    return ret;
-  }
-
-  // THAR BE MORE DRAGONS.
-  //
-  // When venturing through the valleys of the unmanaged, our hero must
-  // remain vigilant and disciplined! If she should ever find a VALUE for
-  // a reference in her travels: Look away! For these VALUEs are pure
-  // death! Our hero must steel herself and continue on her quest, returning
-  // as soon as possible to the castle of the managed.
   void* rb_thread_call_without_gvl(void *(*func)(void *data), void* data1,
                                   rb_unblock_function_t ubf, void* ubf_data) {
     NativeMethodEnvironment* env = NativeMethodEnvironment::get();
-    State* state = env->state();
+    ThreadState* state = env->state();
     void* ret = NULL;
 
     if(ubf == RUBY_UBF_IO || ubf == RUBY_UBF_PROCESS) {
-      state->vm()->interrupt_with_signal();
+      state->interrupt_with_signal();
     } else {
-      state->vm()->wait_on_custom_function(env->state(), ubf, ubf_data);
+      state->wait_on_custom_function(env->state(), ubf, ubf_data);
     }
     LEAVE_CAPI(env->state());
     {
@@ -183,31 +149,24 @@ extern "C" {
       ret = (*func)(data1);
     }
     ENTER_CAPI(env->state());
-    state->vm()->clear_waiter();
+    state->clear_waiter();
 
     return ret;
   }
 
-  // THAR BE EVEN MORE DRAGONS.
-  //
-  // When venturing through the valleys of the unmanaged, our hero must
-  // remain vigilant and disciplined! If she should ever find a VALUE for
-  // a reference in her travels: Look away! For these VALUEs are pure
-  // death! Our hero must steel herself and continue on her quest, returning
-  // as soon as possible to the castle of the managed.
   void* rb_thread_call_without_gvl2(void *(*func)(void *data), void* data1,
                                    rb_unblock_function_t ubf, void* ubf_data) {
     NativeMethodEnvironment* env = NativeMethodEnvironment::get();
-    State* state = env->state();
+    ThreadState* state = env->state();
     void* ret = NULL;
 
-    if(state->vm()->thread_interrupted_p(state)) {
+    if(state->thread_interrupted_p()) {
       return ret;
     }
     if(ubf == RUBY_UBF_IO || ubf == RUBY_UBF_PROCESS) {
-      state->vm()->interrupt_with_signal();
+      state->interrupt_with_signal();
     } else {
-      state->vm()->wait_on_custom_function(env->state(), ubf, ubf_data);
+      state->wait_on_custom_function(env->state(), ubf, ubf_data);
     }
     LEAVE_CAPI(env->state());
     {
@@ -215,7 +174,7 @@ extern "C" {
       ret = (*func)(data1);
     }
     ENTER_CAPI(env->state());
-    state->vm()->clear_waiter();
+    state->clear_waiter();
 
     return ret;
   }
@@ -226,13 +185,13 @@ extern "C" {
   void* rb_thread_call_with_gvl(void* (*func)(void*), void* data) {
     NativeMethodEnvironment* env = NativeMethodEnvironment::get();
 
-    State* state = env->state();
+    ThreadState* state = env->state();
     ENTER_CAPI(state);
-    state->vm()->managed_phase(state);
+    state->managed_phase();
 
     void* ret = (*func)(data);
 
-    env->state()->vm()->unmanaged_phase(state);
+    env->state()->unmanaged_phase();
     LEAVE_CAPI(env->state());
 
     return ret;
@@ -241,7 +200,7 @@ extern "C" {
   Object* run_function(STATE) {
     NativeMethodEnvironment* env = NativeMethodEnvironment::get();
 
-    Thread* thread = state->vm()->thread();
+    Thread* thread = state->thread();
 
     NativeMethod* nm = capi::c_as<NativeMethod>(
         thread->variable_get(state, state->symbol("function")));
@@ -263,7 +222,7 @@ extern "C" {
     env->set_current_call_frame(&call_frame);
     env->set_current_native_frame(&nmf);
 
-    state->vm()->set_call_frame(&call_frame);
+    state->set_call_frame(&call_frame);
 
     nmf.setup(
         MemoryHandle::value(thread),
@@ -283,8 +242,8 @@ extern "C" {
       LEAVE_CAPI(state);
 
       // Set exception in thread so it's raised when joining.
-      state->vm()->thread()->exception(state,
-          capi::c_as<Exception>(state->vm()->thread_state()->current_exception()));
+      state->thread()->exception(state,
+          capi::c_as<Exception>(state->unwind_state()->current_exception()));
     } else {
       value = MemoryHandle::object(nm->func()(ptr->pointer));
     }
@@ -300,7 +259,7 @@ extern "C" {
 
   VALUE capi_thread_create(VALUE (*func)(ANYARGS), void* arg, const char* name, const char* file) {
     NativeMethodEnvironment* env = NativeMethodEnvironment::get();
-    State* state = env->state();
+    ThreadState* state = env->state();
 
     NativeMethod* nm = NativeMethod::create(state,
                         String::create_pinned(state, file), G(thread),
@@ -314,7 +273,7 @@ extern "C" {
     thr->variable_set(state, state->symbol("function"), nm);
     thr->variable_set(state, state->symbol("argument"), ptr);
 
-    thr->group(state, state->vm()->thread()->group());
+    thr->group(state, state->thread()->group());
 
     VALUE thr_handle = MemoryHandle::value(thr);
     thr->fork(state);

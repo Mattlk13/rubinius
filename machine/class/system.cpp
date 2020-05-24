@@ -1,4 +1,5 @@
 #include "arguments.hpp"
+#include "raise_reason.hpp"
 
 #include "class/array.hpp"
 #include "class/autoload.hpp"
@@ -21,6 +22,7 @@
 #include "class/string.hpp"
 #include "class/symbol.hpp"
 #include "class/system.hpp"
+#include "class/unwind_state.hpp"
 #include "class/variable_scope.hpp"
 
 #include "call_frame.hpp"
@@ -34,7 +36,7 @@
 #include "machine_code.hpp"
 #include "object_utils.hpp"
 #include "on_stack.hpp"
-#include "signal.hpp"
+#include "signals.hpp"
 #include "thread_phase.hpp"
 #include "windows_compat.h"
 
@@ -49,17 +51,18 @@
 
 #include "paths.h"
 
-#include <vector>
+#include <atomic>
 #include <errno.h>
 #include <fcntl.h>
-#include <iostream>
 #include <fstream>
+#include <iostream>
 #include <regex>
+#include <signal.h>
+#include <sstream>
 #include <stdarg.h>
 #include <string.h>
-#include <sstream>
-#include <signal.h>
 #include <unistd.h>
+#include <vector>
 
 #ifndef RBX_WINDOWS
 #include <sys/resource.h>
@@ -216,7 +219,7 @@ namespace rubinius {
   public:
     ExecCommand(STATE, String* command)
       : argc_(0)
-      , argv_(NULL)
+      , argv_(nullptr)
     {
       command_ = make_string(state, command);
       command_size_ = command->byte_size();
@@ -227,13 +230,13 @@ namespace rubinius {
       command_size_ = command->byte_size();
 
       argc_ = args->size();
-      argv_ = NULL;
+      argv_ = nullptr;
 
       if(argc_ > 0) {
         argv_ = new char*[argc_ + 1];
 
         /* execvp() requires a NULL as last element */
-        argv_[argc_] = NULL;
+        argv_[argc_] = nullptr;
 
         for(size_t i = 0; i < argc_; i++) {
           /* POSIX guarantees that execvp does not modify the characters to
@@ -288,8 +291,8 @@ namespace rubinius {
       if(Array* env = try_as<Array>(
             table->fetch(state, state->symbol("env"))))
       {
-        native_int size = env->size();
-        for(native_int i = 0; i < size; i += 2) {
+        intptr_t size = env->size();
+        for(intptr_t i = 0; i < size; i += 2) {
           const char* key = as<String>(env->get(state, i))->c_str_null_safe(state);
           Object* value = env->get(state, i + 1);
 
@@ -339,8 +342,8 @@ namespace rubinius {
       if(Array* assign = try_as<Array>(
             table->fetch(state, state->symbol("assign_fd"))))
       {
-        native_int size = assign->size();
-        for(native_int i = 0; i < size; i += 4) {
+        intptr_t size = assign->size();
+        for(intptr_t i = 0; i < size; i += 4) {
           int from = as<Fixnum>(assign->get(state, i))->to_native();
           int to = IO::open_with_cloexec(state,
               as<String>(assign->get(state, i + 1))->c_str(state),
@@ -354,8 +357,8 @@ namespace rubinius {
       if(Array* redirect = try_as<Array>(
             table->fetch(state, state->symbol("redirect_fd"))))
       {
-        native_int size = redirect->size();
-        for(native_int i = 0; i < size; i += 2) {
+        intptr_t size = redirect->size();
+        for(intptr_t i = 0; i < size; i += 2) {
           int from = as<Fixnum>(redirect->get(state, i))->to_native();
           int to = as<Fixnum>(redirect->get(state, i + 1))->to_native();
 
@@ -382,7 +385,7 @@ namespace rubinius {
 
     if(pid == 0) {
       // We're in the child...
-      state->vm()->after_fork_child(state);
+      state->machine()->after_fork_child(state);
     }
 
     return pid;
@@ -402,7 +405,7 @@ namespace rubinius {
 
     if(pipe(errors) != 0) {
       Exception::raise_errno_error(state, "error setting up pipes", errno, "pipe(2)");
-      return NULL;
+      return nullptr;
     }
 
     int pid = fork_exec(state, errors[1]);
@@ -413,7 +416,7 @@ namespace rubinius {
       close(errors[1]);
 
       Exception::raise_errno_error(state, "error forking", errno, "fork(2)");
-      return NULL;
+      return nullptr;
     }
 
     if(pid == 0) {
@@ -435,7 +438,7 @@ namespace rubinius {
         action.sa_flags = 0;
         sigfillset(&action.sa_mask);
 
-        sigaction(i, &action, NULL);
+        sigaction(i, &action, nullptr);
       }
 
       int exec_errno = 0;
@@ -482,19 +485,19 @@ namespace rubinius {
 
       close(errors[1]);
 
-      if(state->shared().config.log_lifetime.value) {
-        const std::regex& filter = state->shared().config.log_filter();
+      if(state->configuration()->log_lifetime.value) {
+        const std::regex& filter = state->configuration()->log_filter();
 
-        if(CallFrame* call_frame = state->vm()->get_filtered_frame(state, filter)) {
+        if(CallFrame* call_frame = state->get_filtered_frame(state, filter)) {
           logger::write("process: spawn: %d: %s, %s, %s:%d",
               pid, exe.command(),
-              state->vm()->name().c_str(),
+              state->name().c_str(),
               call_frame->file(state)->cpp_str(state).c_str(),
               call_frame->line(state));
         } else {
           logger::write("process: spawn: %d: %s, %s",
               pid, exe.command(),
-              state->vm()->name().c_str());
+              state->name().c_str());
         }
       }
 
@@ -523,7 +526,7 @@ namespace rubinius {
 
     if(size != 0) {
       Exception::raise_errno_error(state, "execvp(2) failed", exec_errno);
-      return NULL;
+      return nullptr;
     }
 
     return Fixnum::from(pid);
@@ -543,12 +546,12 @@ namespace rubinius {
 
     if(pipe(errors) != 0) {
       Exception::raise_errno_error(state, "error setting up pipes", errno, "pipe(2)");
-      return NULL;
+      return nullptr;
     }
 
     if(pipe(output) != 0) {
       Exception::raise_errno_error(state, "error setting up pipes", errno, "pipe(2)");
-      return NULL;
+      return nullptr;
     }
 
     int pid = fork_exec(state, errors[1]);
@@ -561,7 +564,7 @@ namespace rubinius {
       close(output[1]);
 
       Exception::raise_errno_error(state, "error forking", errno, "fork(2)");
-      return NULL;
+      return nullptr;
     }
 
     if(pid == 0) {
@@ -583,7 +586,7 @@ namespace rubinius {
         action.sa_flags = 0;
         sigfillset(&action.sa_mask);
 
-        sigaction(i, &action, NULL);
+        sigaction(i, &action, nullptr);
       }
 
       exec_sh_fallback(state, exe.command(), exe.command_size());
@@ -612,19 +615,19 @@ namespace rubinius {
       close(errors[1]);
       close(output[1]);
 
-      if(state->shared().config.log_lifetime.value) {
-        const std::regex& filter = state->shared().config.log_filter();
+      if(state->configuration()->log_lifetime.value) {
+        const std::regex& filter = state->configuration()->log_filter();
 
-        if(CallFrame* call_frame = state->vm()->get_filtered_frame(state, filter)) {
+        if(CallFrame* call_frame = state->get_filtered_frame(state, filter)) {
           logger::write("process: backtick: %d: %s, %s, %s:%d",
               pid, exe.command(),
-              state->vm()->name().c_str(),
+              state->name().c_str(),
               call_frame->file(state)->cpp_str(state).c_str(),
               call_frame->line(state));
         } else {
           logger::write("process: backtick: %d: %s, %s",
               pid, exe.command(),
-              state->vm()->name().c_str());
+              state->name().c_str());
         }
       }
 
@@ -655,7 +658,7 @@ namespace rubinius {
 
     if(size != 0) {
       Exception::raise_errno_error(state, "execvp(2) failed", exec_errno);
-      return NULL;
+      return nullptr;
     }
 
     std::string buf;
@@ -673,9 +676,9 @@ namespace rubinius {
             case EINTR:
               {
                 ManagedPhase managed(state);
-                if(state->vm()->thread_interrupted_p(state)) {
+                if(state->thread_interrupted_p()) {
                   close(output[0]);
-                  return NULL;
+                  return nullptr;
                 }
               }
               continue;
@@ -710,17 +713,17 @@ namespace rubinius {
      */
     ExecCommand exe(state, path, args);
 
-    if(state->shared().config.log_lifetime.value) {
-      const std::regex& filter = state->shared().config.log_filter();
+    if(state->configuration()->log_lifetime.value) {
+      const std::regex& filter = state->configuration()->log_filter();
 
-      if(CallFrame* call_frame = state->vm()->get_filtered_frame(state, filter)) {
+      if(CallFrame* call_frame = state->get_filtered_frame(state, filter)) {
         logger::write("process: exec: %s, %s, %s:%d", exe.command(),
-            state->vm()->name().c_str(),
+            state->name().c_str(),
             call_frame->file(state)->cpp_str(state).c_str(),
             call_frame->line(state));
       } else {
         logger::write("process: exec: %s, %s", exe.command(),
-            state->vm()->name().c_str());
+            state->name().c_str());
       }
     }
 
@@ -764,63 +767,51 @@ namespace rubinius {
       action.sa_flags = 0;
       sigfillset(&action.sa_mask);
 
-      sigaction(i, &action, NULL);
+      sigaction(i, &action, nullptr);
     }
 
     /* execvp() returning means it failed. */
     Exception::raise_errno_error(state, "execvp(2) failed", erno);
 
-    return NULL;
+    return nullptr;
   }
 
-  Object* System::vm_wait_pid(STATE, Fixnum* pid_obj, Object* no_hang) {
+  Object* System::vm_waitpid(STATE, Fixnum* pid_obj, Object* no_hang) {
 #ifdef RBX_WINDOWS
     // TODO: Windows
     return Primitives::failure();
 #else
     pid_t input_pid = pid_obj->to_native();
-    int options = 0;
+    int options = WNOHANG;
     int status;
     pid_t pid;
-
-    if(CBOOL(no_hang)) {
-      options |= WNOHANG;
-    }
-
-    typedef void (*rbx_sighandler_t)(int);
-
-    rbx_sighandler_t hup_func;
-    rbx_sighandler_t quit_func;
-    rbx_sighandler_t int_func;
+    bool request_nohang = CBOOL(no_hang);
 
   retry:
-
-    hup_func  = signal(SIGHUP, SIG_IGN);
-    quit_func = signal(SIGQUIT, SIG_IGN);
-    int_func  = signal(SIGINT, SIG_IGN);
 
     {
       UnmanagedPhase unmanaged(state);
       pid = waitpid(input_pid, &status, options);
     }
 
-    signal(SIGHUP, hup_func);
-    signal(SIGQUIT, quit_func);
-    signal(SIGINT, int_func);
+    if(pid == 0) {
+      if(request_nohang) {
+        return cNil;
+      } else {
+        goto retry;
+      }
+    }
 
     if(pid == -1) {
       if(errno == ECHILD) return cFalse;
+
       if(errno == EINTR) {
-        if(state->vm()->thread_interrupted_p(state)) return NULL;
+        if(state->thread_interrupted_p()) return nullptr;
         goto retry;
       }
 
       // TODO handle other errnos?
       return cFalse;
-    }
-
-    if(CBOOL(no_hang) && pid == 0) {
-      return cNil;
     }
 
     Object* output  = cNil;
@@ -840,8 +831,8 @@ namespace rubinius {
   }
 
   Object* System::vm_exit(STATE, Fixnum* code) {
-    state->vm()->thread_state()->raise_exit(code);
-    return NULL;
+    state->unwind_state()->raise_exit(code);
+    return nullptr;
   }
 
   Fixnum* System::vm_fork(STATE) {
@@ -849,7 +840,7 @@ namespace rubinius {
     // TODO: Windows
     return force_as<Fixnum>(Primitives::failure());
 #else
-    if(Fiber* fiber = state->vm()->fiber()) {
+    if(Fiber* fiber = state->fiber()) {
       if(!fiber->nil_p() && !fiber->root_p()) {
         Exception::raise_runtime_error(state, "fork() not allowed from Fiber");
       }
@@ -860,7 +851,7 @@ namespace rubinius {
     {
       StopPhase locked(state);
 
-      state->shared().machine_threads()->before_fork(state);
+      state->machine()->before_fork(state);
 
       // Hold the logger lock to avoid racing the logger
       logger::lock();
@@ -871,19 +862,19 @@ namespace rubinius {
 
       if(pid > 0) {
         // We're in the parent...
-        state->shared().machine_threads()->after_fork_parent(state);
+        state->machine()->after_fork_parent(state);
 
-        if(state->shared().config.log_lifetime.value) {
-          const std::regex& filter = state->shared().config.log_filter();
+        if(state->configuration()->log_lifetime.value) {
+          const std::regex& filter = state->configuration()->log_filter();
 
-          if(CallFrame* call_frame = state->vm()->get_filtered_frame(state, filter)) {
+          if(CallFrame* call_frame = state->get_filtered_frame(state, filter)) {
             logger::write("process: fork: child: %d, %s, %s:%d", pid,
-                state->vm()->name().c_str(),
+                state->name().c_str(),
                 call_frame->file(state)->cpp_str(state).c_str(),
                 call_frame->line(state));
           } else {
             logger::write("process: fork: child: %d, %s", pid,
-                state->vm()->name().c_str());
+                state->name().c_str());
           }
         }
       }
@@ -891,17 +882,14 @@ namespace rubinius {
 
     if(pid == 0) {
       // We're in the child...
-      state->vm()->after_fork_child(state);
-
-      state->shared().after_fork_child(state);
-      state->shared().machine_threads()->after_fork_child(state);
+      state->machine()->after_fork_child(state);
 
       // In the child, the PID is nil in Ruby.
       return nil<Fixnum>();
     } else if(pid < 0) {
       // We errored...
       Exception::raise_errno_error(state, "fork(2) failed");
-      return NULL;
+      return nullptr;
     }
 
     // The compiler can't understand the covering above, so...
@@ -914,15 +902,15 @@ namespace rubinius {
     // in File#ininitialize). If we decided to ignore some GC.start calls
     // by usercode trying to be clever, we can use force to know that we
     // should NOT ignore it.
-    if(CBOOL(force) || state->shared().config.collector_honor_start) {
-      state->memory()->collector()->collect_requested(state,
+    if(CBOOL(force) || state->configuration()->collector_honor_start) {
+      state->collector()->collect_requested(state,
           "collector: request to collect from managed code");
     }
     return cNil;
   }
 
   Object* System::vm_get_config_item(STATE, String* var) {
-    ConfigParser::Entry* ent = state->shared().user_variables.find(var->c_str(state));
+    ConfigParser::Entry* ent = state->environment()->user_variables()->find(var->c_str(state));
     if(!ent) return cNil;
 
     if(ent->is_number()) {
@@ -937,7 +925,7 @@ namespace rubinius {
   Object* System::vm_get_config_section(STATE, String* section) {
     ConfigParser::EntryList* list;
 
-    list = state->shared().user_variables.get_section(
+    list = state->environment()->user_variables()->get_section(
         reinterpret_cast<char*>(section->byte_address()));
 
     Array* ary = Array::create(state, list->size());
@@ -958,7 +946,7 @@ namespace rubinius {
   Object* System::vm_reset_method_cache(STATE, Module* mod, Symbol* name) {
     mod->reset_method_cache(state, name);
 
-    state->vm()->metrics()->cache_resets++;
+    state->metrics()->cache_resets++;
 
     return cTrue;
   }
@@ -976,7 +964,7 @@ namespace rubinius {
 
 
   Object* System::vm_show_backtrace(STATE) {
-    state->vm()->call_frame()->print_backtrace(state);
+    state->call_frame()->print_backtrace(state);
     return cNil;
   }
 
@@ -986,15 +974,14 @@ namespace rubinius {
   }
 
   Object* System::vm_watch_signal(STATE, Fixnum* sig, Object* ignored) {
-    SignalThread* st = state->shared().signals();
+    if(Signals* signals = state->machine()->signals()) {
+      intptr_t i = sig->to_native();
 
-    if(st) {
-      native_int i = sig->to_native();
       if(i < 0) {
-        st->add_signal_handler(state, -i, SignalThread::eDefault);
+        signals->add_signal_handler(state, -i, Signals::eDefault);
       } else if(i > 0) {
-        st->add_signal_handler(state, i,
-            CBOOL(ignored) ? SignalThread::eIgnore : SignalThread::eCustom);
+        signals->add_signal_handler(state, i,
+            CBOOL(ignored) ? Signals::eIgnore : Signals::eCustom);
       }
 
       return cTrue;
@@ -1004,54 +991,11 @@ namespace rubinius {
   }
 
   Object* System::vm_signal_thread(STATE) {
-    return state->shared().signals()->vm()->thread();
+    return state->machine()->signals()->signal_thread()->thread_state()->thread();
   }
 
   Object* System::vm_time(STATE) {
     return Integer::from(state, time(0));
-  }
-
-#define NANOSECONDS 1000000000
-  Object* System::vm_sleep(STATE, Object* duration) {
-    struct timespec ts = {0,0};
-    bool use_timed_wait = true;
-
-    if(Fixnum* fix = try_as<Fixnum>(duration)) {
-      if(!fix->positive_p()) {
-        Exception::raise_argument_error(state, "time interval must be positive");
-      }
-      ts.tv_sec = fix->to_native();
-    } else if(Float* flt = try_as<Float>(duration)) {
-      if(flt->value() < 0.0) {
-        Exception::raise_argument_error(state, "time interval must be positive");
-      }
-      uint64_t nano = (uint64_t)(flt->value() * NANOSECONDS);
-      ts.tv_sec  =  (time_t)(nano / NANOSECONDS);
-      ts.tv_nsec =    (long)(nano % NANOSECONDS);
-    } else if(duration == G(undefined)) {
-      use_timed_wait = false;
-    } else {
-      return Primitives::failure();
-    }
-
-    time_t start = time(0);
-
-    if(use_timed_wait) {
-      struct timeval tv = {0,0};
-      gettimeofday(&tv, 0);
-
-      uint64_t nano = ts.tv_nsec + tv.tv_usec * 1000;
-      ts.tv_sec  += tv.tv_sec + nano / NANOSECONDS;
-      ts.tv_nsec  = nano % NANOSECONDS;
-
-      if(!state->park_timed(state, &ts)) return NULL;
-    } else {
-      if(!state->park(state)) return NULL;
-    }
-
-    if(state->vm()->thread_interrupted_p(state)) return NULL;
-
-    return Fixnum::from(time(0) - start);
   }
 
   static inline double tv_to_dbl(struct timeval* tv) {
@@ -1123,7 +1067,7 @@ namespace rubinius {
         // exc->locations(state, System::vm_backtrace(state,
         //                Fixnum::from(0));
         state->raise_exception(exc);
-        return NULL;
+        return nullptr;
       }
 
       return cls;
@@ -1228,7 +1172,7 @@ namespace rubinius {
       }
 
       Tuple* lits = cc->literals();
-      for(native_int i = 0; i < lits->num_fields(); i++) {
+      for(intptr_t i = 0; i < lits->num_fields(); i++) {
         if(Symbol* sym = try_as<Symbol>(lits->at(state, i))) {
           if(CBOOL(sym->is_ivar_p(state))) {
             if(!ary->includes_p(state, sym)) ary->append(state, sym);
@@ -1290,20 +1234,20 @@ namespace rubinius {
   }
 
   Object* System::vm_global_serial(STATE) {
-    return Fixnum::from(state->shared().global_serial());
+    return Fixnum::from(state->memory()->global_serial());
   }
 
   Object* System::vm_inc_global_serial(STATE) {
-    if(state->shared().config.serial_debug) {
+    if(state->configuration()->serial_debug) {
       std::cerr << std::endl
                 << "global serial increased from "
-                << state->shared().global_serial()
+                << state->memory()->global_serial()
                 << std::endl;
 
-      state->vm()->call_frame()->print_backtrace(state, std::cerr, 6, true);
+      state->call_frame()->print_backtrace(state, std::cerr, 6, true);
     }
 
-    return Fixnum::from(state->shared().inc_global_serial(state));
+    return Fixnum::from(state->memory()->inc_global_serial());
   }
 
   Object* System::vm_deoptimize_all(STATE, Object* o_disable) {
@@ -1311,7 +1255,7 @@ namespace rubinius {
 
     /* TODO: GC: use MemoryVisitor
     memory::ObjectWalker walker(state->memory());
-    memory::GCData gc_data(state->vm());
+    memory::GCData gc_data(state);
 
     // Seed it with the root objects.
     walker.seed(gc_data);
@@ -1338,27 +1282,27 @@ namespace rubinius {
   Object* System::vm_raise_exception(STATE, Exception* exc) {
     state->raise_exception(exc);
 
-    if(state->shared().config.log_exceptions.value) {
+    if(state->configuration()->log_exceptions.value) {
       logger::write("exception: %s: %s",
           exc->class_object(state)->module_name()->cpp_str(state).c_str(), exc->message_c_str(state));
     }
 
-    return NULL;
+    return nullptr;
   }
 
   Fixnum* System::vm_memory_size(STATE, Object* obj) {
     if(obj->reference_p()) {
-      size_t bytes = obj->size_in_bytes(state->vm());
+      size_t bytes = obj->size_in_bytes(state);
       if(Bignum* b = try_as<Bignum>(obj)) {
         bytes += b->managed_memory_size(state);
       }
       Object* iv = obj->ivars();
       if(LookupTable* lt = try_as<LookupTable>(iv)) {
-        bytes += iv->size_in_bytes(state->vm());
-        bytes += lt->values()->size_in_bytes(state->vm());
+        bytes += iv->size_in_bytes(state);
+        bytes += lt->values()->size_in_bytes(state);
         bytes += (lt->entries()->to_native() * sizeof(LookupTableBucket));
       } else if(iv->reference_p()) {
-        bytes += iv->size_in_bytes(state->vm());
+        bytes += iv->size_in_bytes(state);
       }
       return Fixnum::from(bytes);
     }
@@ -1367,8 +1311,8 @@ namespace rubinius {
   }
 
   Object* System::vm_throw(STATE, Object* dest, Object* value) {
-    state->vm()->thread_state()->raise_throw(dest, value);
-    return NULL;
+    state->unwind_state()->raise_throw(dest, value);
+    return nullptr;
   }
 
   Object* System::vm_catch(STATE, Object* dest, Object* obj) {
@@ -1380,10 +1324,10 @@ namespace rubinius {
     OnStack<1> os(state, dest);
     Object* ret = dispatch.send(state, lookup, args);
 
-    if(!ret && state->vm()->thread_state()->raise_reason() == cCatchThrow) {
-      if(state->vm()->thread_state()->throw_dest()->equal_p(dest)) {
-        Object* val = state->vm()->thread_state()->raise_value();
-        state->vm()->thread_state()->clear_return();
+    if(!ret && state->unwind_state()->raise_reason() == cCatchThrow) {
+      if(state->unwind_state()->throw_dest()->equal_p(dest)) {
+        Object* val = state->unwind_state()->raise_value();
+        state->unwind_state()->clear_return();
         return val;
       }
     }
@@ -1408,7 +1352,7 @@ namespace rubinius {
   }
 
   Object* System::vm_method_missing_reason(STATE) {
-    switch(state->vm()->method_missing_reason()) {
+    switch(state->method_missing_reason()) {
     case ePrivate:
       return G(sym_private);
     case eProtected:
@@ -1425,7 +1369,7 @@ namespace rubinius {
   }
 
   Object* System::vm_constant_missing_reason(STATE) {
-    switch(state->vm()->constant_missing_reason()) {
+    switch(state->constant_missing_reason()) {
     case vPrivate:
       return G(sym_private);
     case vNonExistent:
@@ -1472,7 +1416,7 @@ namespace rubinius {
   }
 
   Object* System::vm_check_super_callable(STATE) {
-    CallFrame* call_frame = state->vm()->call_frame();
+    CallFrame* call_frame = state->call_frame();
 
     Module* start = call_frame->module()->superclass();
     Symbol* sym = call_frame->original_name();
@@ -1560,7 +1504,7 @@ retry:
   }
 
   Object* System::vm_memory_barrier(STATE) {
-    atomic::memory_barrier();
+    std::atomic_thread_fence(std::memory_order_acq_rel);
     return cNil;
   }
 
@@ -1621,7 +1565,7 @@ retry:
   }
 
   Tuple* System::vm_thread_state(STATE) {
-    VMThreadState* ts = state->vm()->thread_state();
+    UnwindState* ts = state->unwind_state();
     Tuple* tuple = Tuple::create(state, 5);
 
     Symbol* reason = 0;
@@ -1638,7 +1582,7 @@ retry:
     case cBreak:
       reason = state->symbol("break");
       break;
-    case cExit:
+    case cSystemExit:
       reason = state->symbol("exit");
       break;
     case cCatchThrow:
@@ -1675,8 +1619,8 @@ retry:
 #define HASH_TRIE_BIT_MASK    0x3f
 
   static inline size_t hash_trie_bit(Fixnum* hash, Fixnum* level) {
-    native_int h = hash->to_native();
-    native_int l = level->to_native();
+    intptr_t h = hash->to_native();
+    intptr_t l = level->to_native();
 
     size_t width = HASH_TRIE_BIT_WIDTH;
     size_t mask = HASH_TRIE_BIT_MASK;

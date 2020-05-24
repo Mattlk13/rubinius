@@ -2,6 +2,7 @@
 #include "memory.hpp"
 #include "object_utils.hpp"
 #include "on_stack.hpp"
+#include "primitives.hpp"
 
 #include "class/array.hpp"
 #include "class/autoload.hpp"
@@ -20,7 +21,7 @@
 #include "class/weakref.hpp"
 
 #include <string>
-#include <ostream>
+#include <sstream>
 
 namespace rubinius {
   void Module::bootstrap(STATE) {
@@ -137,12 +138,12 @@ namespace rubinius {
 
   void Module::set_const(STATE, Symbol* sym, Object* val) {
     constant_table()->store(state, sym, val, G(sym_public));
-    state->shared().inc_global_serial(state);
+    state->memory()->inc_global_serial();
   }
 
   void Module::del_const(STATE, Symbol* sym) {
     constant_table()->remove(state, sym);
-    state->shared().inc_global_serial(state);
+    state->memory()->inc_global_serial();
   }
 
   void Module::set_const(STATE, std::string name, Object* val) {
@@ -500,10 +501,11 @@ namespace rubinius {
     }
   }
 
+  /*
   std::string Module::name() {
     // TODO: temporary method to facilitate Profiler until passing State into
     // GC is fixed.
-    VM* vm = VM::current();
+    ThreadState* vm = ThreadState::current();
     std::string name;
 
     Symbol* sym = module_name();
@@ -532,6 +534,7 @@ namespace rubinius {
 
     return name;
   }
+  */
 
   void Module::Info::show(STATE, Object* self, int level) {
     Module* mod = as<Module>(self);

@@ -23,6 +23,7 @@
 #include "class/constant_cache.hpp"
 #include "class/call_site.hpp"
 #include "class/unwind_site.hpp"
+#include "class/unwind_state.hpp"
 
 #include "diagnostics/measurement.hpp"
 #include "diagnostics/timing.hpp"
@@ -35,7 +36,7 @@
 #include "configuration.hpp"
 #include "dtrace/dtrace.h"
 
-#include <ostream>
+#include <sstream>
 
 #ifdef RBX_WINDOWS
 #include <malloc.h>
@@ -68,6 +69,7 @@ namespace rubinius {
     , required_args(code->required_args()->to_native())
     , post_args(code->post_args()->to_native())
     , splat_position(-1)
+    , keywords_count(0)
     , stack_size(code->stack_size()->to_native())
     , number_of_locals(code->number_of_locals())
     , registers(code->registers()->to_native())
@@ -105,7 +107,7 @@ namespace rubinius {
       splat_position = pos->to_native();
     }
 
-    state->shared().om->add_code_resource(state, this);
+    state->memory()->add_code_resource(state, this);
   }
 
   MachineCode::~MachineCode() {
@@ -129,6 +131,10 @@ namespace rubinius {
               reinterpret_cast<Object*>(opcodes[ip])))
         {
           call_site->finalize(state);
+        } else if(UnwindSite* unwind_site = try_as<UnwindSite>(
+              reinterpret_cast<Object*>(opcodes[ip])))
+        {
+          unwind_site->finalize(state);
         }
       }
     }
@@ -268,9 +274,9 @@ namespace rubinius {
     static bool call(STATE, MachineCode* mcode, StackVariables* scope,
                      Arguments& args)
     {
-      if((native_int)args.total() != mcode->total_args) return false;
+      if((intptr_t)args.total() != mcode->total_args) return false;
 
-      for(native_int i = 0; i < mcode->total_args; i++) {
+      for(intptr_t i = 0; i < mcode->total_args; i++) {
         scope->set_local(i, args.get_argument(i));
       }
 
@@ -378,16 +384,16 @@ namespace rubinius {
        *
        */
 
-      const native_int N = args.total();
-      const native_int T = mcode->total_args;
-      const native_int M = mcode->required_args;
-      const native_int O = T - M - (mcode->keywords ? 1 : 0);
+      const intptr_t N = args.total();
+      const intptr_t T = mcode->total_args;
+      const intptr_t M = mcode->required_args;
+      const intptr_t O = T - M - (mcode->keywords ? 1 : 0);
 
       /* TODO: Clean up usage to uniformly refer to 'splat' as N arguments
        * passed from sender at a single position and 'rest' as N arguments
        * collected into a single argument at the receiver.
        */
-      const native_int RI = mcode->splat_position;
+      const intptr_t RI = mcode->splat_position;
       const bool RP = (RI >= 0);
 
       // expecting 0, got 0.
@@ -405,8 +411,8 @@ namespace rubinius {
       // Too many args (no rest argument!)
       if(!RP && N > T) return false;
 
-      const native_int P  = mcode->post_args;
-      const native_int H  = M - P;
+      const intptr_t P  = mcode->post_args;
+      const intptr_t H  = M - P;
 
       Object* kw = 0;
       Object* kw_remainder = 0;
@@ -437,21 +443,21 @@ namespace rubinius {
         }
       }
 
-      const native_int K = (KP && !KA && N > M) ? 1 : 0;
-      const native_int E = N - M - K;
+      const intptr_t K = (KP && !KA && N > M) ? 1 : 0;
+      const intptr_t E = N - M - K;
 
       // Too many arguments
       if(mcode->keywords && !RP && !KP && E > O) return false;
 
-      native_int X;
+      intptr_t X;
 
-      const native_int ON = (X = MIN(O, E)) > 0 ? X : 0;
-      const native_int RN = (RP && (X = E - ON) > 0) ? X : 0;
-      const native_int PI = H + O + (RP ? 1 : 0);
-      const native_int KI = RP ? T : T - 1;
+      const intptr_t ON = (X = MIN(O, E)) > 0 ? X : 0;
+      const intptr_t RN = (RP && (X = E - ON) > 0) ? X : 0;
+      const intptr_t PI = H + O + (RP ? 1 : 0);
+      const intptr_t KI = RP ? T : T - 1;
 
-      native_int a = 0;   // argument index
-      native_int l = 0;   // local index
+      intptr_t a = 0;   // argument index
+      intptr_t l = 0;   // local index
 
       // head arguments
       if(H > 0) {
@@ -529,7 +535,7 @@ namespace rubinius {
       width = Instructions::instruction_data(op).width;
 
       if(op == instructions::data_push_ivar.id) {
-        native_int sym = as<Symbol>(reinterpret_cast<Object*>(opcodes[i + 1]))->index();
+        intptr_t sym = as<Symbol>(reinterpret_cast<Object*>(opcodes[i + 1]))->index();
 
         TypeInfo::Slots::iterator it = ti->slots.find(sym);
         if(it != ti->slots.end()) {
@@ -538,7 +544,7 @@ namespace rubinius {
           opcodes[i + 1] = ti->slot_locations[it->second];
         }
       } else if(op == instructions::data_set_ivar.id) {
-        native_int sym = as<Symbol>(reinterpret_cast<Object*>(opcodes[i + 1]))->index();
+        intptr_t sym = as<Symbol>(reinterpret_cast<Object*>(opcodes[i + 1]))->index();
 
         TypeInfo::Slots::iterator it = ti->slots.find(sym);
         if(it != ti->slots.end()) {
@@ -613,7 +619,7 @@ namespace rubinius {
 
       // If argument handling fails..
       if(ArgumentHandler::call(state, mcode, scope, args) == false) {
-        if(state->vm()->thread_state()->raise_reason() == cNone) {
+        if(state->unwind_state()->raise_reason() == cNone) {
           Exception* exc =
             Exception::make_argument_error(state, mcode->total_args,
                 args.total(), args.name()->cpp_str(state).c_str());
@@ -624,7 +630,8 @@ namespace rubinius {
         return NULL;
       }
 
-      CallFrame* call_frame = ALLOCA_CALL_FRAME(mcode->stack_size + mcode->registers);
+      uintptr_t* mem = ALLOCA_CALL_FRAME(mcode->stack_size + mcode->registers);
+      CallFrame* call_frame = new(mem) CallFrame();
 
       call_frame->prepare(mcode->stack_size);
 
@@ -637,7 +644,7 @@ namespace rubinius {
       call_frame->arguments = &args;
       call_frame->unwind = nullptr;
 
-      if(!state->vm()->push_call_frame(state, call_frame)) {
+      if(!state->push_call_frame(state, call_frame)) {
         return NULL;
       }
 
@@ -649,7 +656,7 @@ namespace rubinius {
       value = (*mcode->run)(state, mcode);
       RUBINIUS_METHOD_RETURN_HOOK(state, scope->module(), args.name());
 
-      if(!state->vm()->pop_call_frame(state, call_frame->previous)) {
+      if(!state->pop_call_frame(state, call_frame->previous)) {
         return NULL;
       }
 
@@ -675,7 +682,8 @@ namespace rubinius {
     // Thus, we have to cache the value in the StackVariables.
     scope->initialize(G(main), name, cNil, G(object), mcode->number_of_locals);
 
-    CallFrame* call_frame = ALLOCA_CALL_FRAME(mcode->stack_size + mcode->registers);
+    uintptr_t* mem = ALLOCA_CALL_FRAME(mcode->stack_size + mcode->registers);
+    CallFrame* call_frame = new(mem) CallFrame();
 
     call_frame->prepare(mcode->stack_size);
 
@@ -690,18 +698,18 @@ namespace rubinius {
     call_frame->arguments = &args;
     call_frame->unwind = nullptr;
 
-    if(!state->vm()->push_call_frame(state, call_frame)) {
+    if(!state->push_call_frame(state, call_frame)) {
       return NULL;
     }
 
-    state->vm()->checkpoint(state);
+    state->checkpoint(state);
 
     // Don't generate profiling info here, it's expected
     // to be done by the caller.
 
     Object* value = (*mcode->run)(state, mcode);
 
-    if(!state->vm()->pop_call_frame(state, call_frame->previous)) {
+    if(!state->pop_call_frame(state, call_frame->previous)) {
       return NULL;
     }
 

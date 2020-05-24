@@ -20,6 +20,7 @@
 #include "class/system.hpp"
 #include "class/tuple.hpp"
 #include "class/variable_scope.hpp"
+#include "class/unwind_state.hpp"
 
 #include "diagnostics/machine.hpp"
 
@@ -72,7 +73,7 @@ namespace rubinius {
       }
     }
 
-    state->vm()->metrics()->blocks_invoked++;
+    state->metrics()->blocks_invoked++;
 
     if(executor ptr = mcode->unspecialized) {
       return (*((BlockExecutor)ptr))(state, env, args, invocation);
@@ -169,17 +170,17 @@ namespace rubinius {
        *
        */
 
-      native_int N = args.total();
-      const native_int T = mcode->total_args;
-      const native_int M = mcode->required_args;
-      const native_int O = T - M - (mcode->keywords ? 1 : 0);
+      intptr_t N = args.total();
+      const intptr_t T = mcode->total_args;
+      const intptr_t M = mcode->required_args;
+      const intptr_t O = T - M - (mcode->keywords ? 1 : 0);
 
 
       /* TODO: Clean up usage to uniformly refer to 'splat' as N arguments
        * passed from sender at a single position and 'rest' as N arguments
        * collected into a single argument at the receiver.
        */
-      const native_int RI = mcode->splat_position;
+      const intptr_t RI = mcode->splat_position;
       const bool RP = (RI >= 0);
 
       // expecting 0, got 0.
@@ -234,8 +235,8 @@ namespace rubinius {
         }
       }
 
-      const native_int P = mcode->post_args;
-      const native_int H = M - P;
+      const intptr_t P = mcode->post_args;
+      const intptr_t H = M - P;
 
       // Too many args (no rest argument!)
       if(!RP && N > T) {
@@ -286,19 +287,19 @@ namespace rubinius {
         N = T - 1;
       }
 
-      const native_int K = (KP && !KA && N > M) ? 1 : 0;
-      const native_int N_M_K = N - M - K;
-      const native_int E = N_M_K > 0 ? N_M_K : 0;
+      const intptr_t K = (KP && !KA && N > M) ? 1 : 0;
+      const intptr_t N_M_K = N - M - K;
+      const intptr_t E = N_M_K > 0 ? N_M_K : 0;
 
-      native_int X;
+      intptr_t X;
 
-      const native_int ON = (X = std::min(O, E)) > 0 ? X : 0;
-      const native_int RN = (RP && (X = E - ON) > 0) ? X : 0;
-      const native_int PI = H + O + (RP ? 1 : 0);
-      const native_int KI = RP ? T : T - 1;
+      const intptr_t ON = (X = std::min(O, E)) > 0 ? X : 0;
+      const intptr_t RN = (RP && (X = E - ON) > 0) ? X : 0;
+      const intptr_t PI = H + O + (RP ? 1 : 0);
+      const intptr_t KI = RP ? T : T - 1;
 
-      native_int a = 0;   // argument index
-      native_int l = 0;   // local index
+      intptr_t a = 0;   // argument index
+      intptr_t l = 0;   // local index
 
       // head arguments
       if(H > 0) {
@@ -349,7 +350,7 @@ namespace rubinius {
 
       // post arguments
       if(P > 0) {
-        const native_int N_K = (X = std::min(N, N - K)) > 0 ? X : N;
+        const intptr_t N_K = (X = std::min(N, N - K)) > 0 ? X : N;
 
         for(l = PI; l < PI + P && a < N_K; l++, a++) {
           scope->set_local(l, args.get_argument(a));
@@ -408,7 +409,7 @@ namespace rubinius {
     scope->set_parent(env->scope());
 
     if(!GenericArguments::call(state, mcode, scope, args, invocation.flags)) {
-      if(state->vm()->thread_state()->raise_reason() == cNone) {
+      if(state->unwind_state()->raise_reason() == cNone) {
         Exception* exc =
           Exception::make_argument_error(state,
               mcode->required_args, args.total(), mcode->name().c_str());
@@ -419,7 +420,8 @@ namespace rubinius {
       return NULL;
     }
 
-    CallFrame* call_frame = ALLOCA_CALL_FRAME(mcode->stack_size + mcode->registers);
+    uintptr_t* mem = ALLOCA_CALL_FRAME(mcode->stack_size + mcode->registers);
+    CallFrame* call_frame = new(mem) CallFrame();
 
     call_frame->prepare(mcode->stack_size);
 
@@ -434,7 +436,7 @@ namespace rubinius {
     call_frame->flags = invocation.flags | CallFrame::cMultipleScopes
                                     | CallFrame::cBlock;
 
-    if(!state->vm()->push_call_frame(state, call_frame)) {
+    if(!state->push_call_frame(state, call_frame)) {
       return NULL;
     }
 
@@ -442,7 +444,7 @@ namespace rubinius {
 
     value = (*mcode->run)(state, mcode);
 
-    if(!state->vm()->pop_call_frame(state, call_frame->previous)) {
+    if(!state->pop_call_frame(state, call_frame->previous)) {
       return NULL;
     }
 
@@ -519,7 +521,7 @@ namespace rubinius {
     BlockEnvironment* be =
       state->memory()->new_object<BlockEnvironment>(state, G(blokenv));
 
-    CallFrame* call_frame = state->vm()->call_frame();
+    CallFrame* call_frame = state->call_frame();
 
     be->scope(state, call_frame->promote_scope(state));
     be->top_scope(state, call_frame->top_scope(state));
@@ -544,11 +546,11 @@ namespace rubinius {
   }
 
   Object* BlockEnvironment::of_sender(STATE) {
-    if(NativeMethodFrame* nmf = state->vm()->get_call_frame(1)->native_method_frame()) {
+    if(NativeMethodFrame* nmf = state->get_call_frame(1)->native_method_frame()) {
       return MemoryHandle::object(nmf->block());
     }
 
-    CallFrame* frame = state->vm()->get_ruby_frame(1);
+    CallFrame* frame = state->get_ruby_frame(1);
 
     // We assume that code using this is going to use it over and
     // over again (ie Proc.new) so we mark the method as not

@@ -2,8 +2,7 @@
 #include "call_frame.hpp"
 #include "defines.hpp"
 #include "primitives.hpp"
-#include "state.hpp"
-#include "vm.hpp"
+#include "thread_state.hpp"
 
 #include "class/class.hpp"
 

@@ -24,8 +24,8 @@ namespace rubinius {
     GO(call_site).set(state->memory()->new_class<Class, CallSite>(
           state, G(rubinius), "CallSite"));
 
-    max_caches = state->shared().config.machine_call_site_cache_limit.value;
-    max_evictions = state->shared().config.machine_call_site_eviction_limit.value;
+    max_caches = state->configuration()->machine_call_site_cache_limit.value;
+    max_evictions = state->configuration()->machine_call_site_eviction_limit.value;
   }
 
   Tuple* CallSite::cache_entries(STATE) {
@@ -74,7 +74,7 @@ namespace rubinius {
 
         call_site->delete_cache(cache);
 
-        state->vm()->metrics()->inline_cache_disabled++;
+        state->metrics()->inline_cache_disabled++;
       } else {
         // Campact and possibly reset cache
         Cache* new_cache = cache->compact();
@@ -84,7 +84,7 @@ namespace rubinius {
           call_site->delete_cache(cache);
 
           if(new_cache) {
-            state->vm()->metrics()->inline_cache_count++;
+            state->metrics()->inline_cache_count++;
           } else {
             call_site->executor(CallSite::dispatch_once);
           }
@@ -106,15 +106,17 @@ namespace rubinius {
         f(state, entry->p_module());
         f(state, entry->p_executable());
 
-        if(state->vm()->shared.profiler()->collecting_p()) {
+        /* TODO: SymbolTable and Module name
+        if(state->shared.profiler()->collecting_p()) {
           if(CompiledCode* code = try_as<CompiledCode>(entry->executable())) {
-            if(code->machine_code()->sample_count > state->vm()->shared.profiler()->sample_min()) {
-              state->vm()->shared.profiler()->add_entry(call_site->serial(), call_site->ip(),
+            if(code->machine_code()->sample_count > state->shared.profiler()->sample_min()) {
+              state->shared.profiler()->add_entry(call_site->serial(), call_site->ip(),
                   code->machine_code()->serial(), entry->hits(),
                   entry->receiver_class()->name(), entry->module()->name());
             }
           }
         }
+        */
       }
     }
 

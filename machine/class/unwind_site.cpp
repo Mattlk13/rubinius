@@ -14,7 +14,7 @@ namespace rubinius {
     GO(unwind_site).set(state->memory()->new_class<Class, UnwindSite>(
           state, G(rubinius), "UnwindSite"));
 
-    max_caches = state->shared().config.machine_unwind_site_limit.value;
+    max_caches = state->configuration()->machine_unwind_site_limit.value;
   }
 
   UnwindSite* UnwindSite::create(STATE, int ip, UnwindType unwind_type) {
@@ -24,7 +24,7 @@ namespace rubinius {
     cache->ip(ip);
     cache->unwind_type(unwind_type);
 
-    state->vm()->metrics()->unwind_site_count++;
+    state->metrics()->unwind_site_count++;
 
     return cache;
   }

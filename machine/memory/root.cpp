@@ -1,6 +1,5 @@
 #include "memory/root.hpp"
-#include "vm.hpp"
-#include "state.hpp"
+#include "thread_state.hpp"
 
 namespace rubinius {
 namespace memory {
@@ -12,12 +11,12 @@ namespace memory {
   }
 
   void Roots::add(Root* node) {
-    utilities::thread::SpinLock::LockGuard guard(lock_);
+    std::lock_guard<std::mutex> guard(lock_);
     this->LinkedList::add(node);
   }
 
   void Roots::remove(Root* node) {
-    utilities::thread::SpinLock::LockGuard guard(lock_);
+    std::lock_guard<std::mutex> guard(lock_);
     this->LinkedList::remove(node);
   }
 
@@ -35,20 +34,6 @@ namespace memory {
     , object_(cUndef)
   {
     set(obj, &state->globals().roots);
-  }
-
-  Root::Root(VM* vm)
-    : LinkedList::Node()
-    , roots_(&vm->globals().roots)
-    , object_(cUndef)
-  {}
-
-  Root::Root(VM* vm, Object* obj)
-    : LinkedList::Node()
-    , roots_(NULL)
-    , object_(cUndef)
-  {
-    set(obj, &vm->globals().roots);
   }
 
   void Root::set(Object* obj, Roots* r) {

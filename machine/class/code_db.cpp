@@ -14,8 +14,6 @@
 #include "diagnostics/codedb.hpp"
 #include "diagnostics/timing.hpp"
 
-#include "util/thread.hpp"
-
 #include <dirent.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -110,7 +108,7 @@ namespace rubinius {
 
   CodeDB* CodeDB::open(STATE, std::string db_path, bool writable) {
     memory::Collector::Inhibit inhibitor(state);
-    std::lock_guard<std::recursive_mutex> lock(state->shared().codedb_lock());
+    std::lock_guard<std::recursive_mutex> lock(state->memory()->codedb_lock());
 
     CodeDB* codedb = state->memory()->new_object<CodeDB>(state, G(codedb));
 
@@ -135,7 +133,7 @@ namespace rubinius {
     stream >> version;
     stream >> signature;
 
-    if(state->shared().config.codedb_cache_validate) {
+    if(state->configuration()->codedb_cache_validate) {
       if(!magic.compare(CodeDB::magic)) return nullptr;
       if(version != CodeDB::version) return nullptr;
       if(!signature.compare(CodeDB::signature)) return nullptr;
@@ -161,7 +159,7 @@ namespace rubinius {
 
     if(codedb->data_fd() < 0) return nullptr;
 
-    codedb->mptr(mmap(NULL, state->shared().config.codedb_cache_size,
+    codedb->mptr(mmap(NULL, state->configuration()->codedb_cache_size,
           PROT_READ|PROT_WRITE, MAP_PRIVATE, codedb->data_fd(), 0));
 
     codedb->data(static_cast<char*>(codedb->mptr()) + codedb->regions()->data.begin);
@@ -228,18 +226,18 @@ namespace rubinius {
 
     core_path.append("/cache");
 
-    if(state->shared().config.codedb_cache_purge) {
+    if(state->configuration()->codedb_cache_purge) {
       CodeDB::purge(state, cache_path);
     }
 
-    if(state->shared().config.codedb_cache_enabled) {
+    if(state->configuration()->codedb_cache_enabled) {
       if(!CodeDB::copy_database(state, core_path, cache_path)) {
         logger::write("codedb: copy failed: %s, %s",
             core_path.c_str(), cache_path.c_str());
       }
     }
 
-    if(state->shared().config.codedb_cache_enabled
+    if(state->configuration()->codedb_cache_enabled
         && (codedb = CodeDB::open(state, cache_path))) {
       base_path = cache_path;
       codedb->writable(state, cFalse);
@@ -296,7 +294,7 @@ namespace rubinius {
                             | std::ofstream::binary
 
   Object* CodeDB::close(STATE) {
-    ::munmap(data(), state->shared().config.codedb_cache_size);
+    ::munmap(data(), state->configuration()->codedb_cache_size);
     ::close(data_fd());
 
     delete index();
@@ -338,7 +336,7 @@ namespace rubinius {
       index_offset = regions()->data.end;
     }
 
-    ::munmap(data(), state->shared().config.codedb_cache_size);
+    ::munmap(data(), state->configuration()->codedb_cache_size);
     ::close(data_fd());
 
     std::ofstream stream;
@@ -400,12 +398,12 @@ namespace rubinius {
 
   CompiledCode* CodeDB::load(STATE, const char* c_id) {
     memory::Collector::Inhibit inhibitor(state);
-    std::lock_guard<std::recursive_mutex> lock(state->shared().codedb_lock());
+    std::lock_guard<std::recursive_mutex> lock(state->memory()->codedb_lock());
 
     timer::StopWatch<timer::nanoseconds> timer(
-        state->shared().codedb_metrics()->load_ns);
+        state->machine()->diagnostics()->codedb_metrics()->load_ns);
 
-    state->shared().codedb_metrics()->load_count++;
+    state->machine()->diagnostics()->codedb_metrics()->load_count++;
 
     CodeDBMap::const_iterator m = index()->find(std::string(c_id));
 
@@ -448,7 +446,7 @@ namespace rubinius {
       String* stem, String* ext, Object* reload, Object* record)
   {
     memory::Collector::Inhibit inhibitor(state);
-    std::lock_guard<std::recursive_mutex> lock(state->shared().codedb_lock());
+    std::lock_guard<std::recursive_mutex> lock(state->memory()->codedb_lock());
 
     std::string search(stem->c_str(state));
     std::string extstr(ext->c_str(state));
@@ -466,7 +464,7 @@ namespace rubinius {
         if(feature_set()->size() != loaded_features()->size()) {
           feature_set()->clear();
 
-          for(native_int i = 0; i < loaded_features()->size(); i++) {
+          for(intptr_t i = 0; i < loaded_features()->size(); i++) {
             if(String* feature = try_as<String>(loaded_features()->get(state, i))) {
               feature_set()->insert(feature->c_str(state));
             }
@@ -487,7 +485,7 @@ namespace rubinius {
         if(path.empty()) {
           std::ostringstream path;
 
-          path << state->shared().config.codedb_core_path.value
+          path << state->configuration()->codedb_core_path.value
                << "/source/"
                << code->file()->cpp_str(state);
 
@@ -522,7 +520,7 @@ namespace rubinius {
       String* stem, String* path, String* feature, Object* record)
   {
     memory::Collector::Inhibit inhibitor(state);
-    std::lock_guard<std::recursive_mutex> lock(state->shared().codedb_lock());
+    std::lock_guard<std::recursive_mutex> lock(state->memory()->codedb_lock());
 
     const char* c_id;
 

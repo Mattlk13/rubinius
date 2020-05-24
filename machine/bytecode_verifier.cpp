@@ -89,10 +89,14 @@ namespace rubinius {
   }
 
   Object* BytecodeVerifier::verify_literal(STATE, int index, int ip) {
+    if(index < 0 || index >= method_->literals()->num_fields()) {
+      fail(state, "literal index is not within bounds", ip);
+    }
+
     if(Object* obj = try_as<Object>(method_->literals()->at(index))) {
       return obj;
     } else {
-      fail(state, "instruction argument is not an Object", ip);
+      fail(state, "literal at index is not an Object", ip);
     }
   }
 
@@ -140,7 +144,7 @@ namespace rubinius {
 
   void BytecodeVerifier::verify(STATE) {
     timer::StopWatch<timer::microseconds> timer(
-        state->vm()->metrics()->bytecode_verifier_us);
+        state->metrics()->bytecode_verifier_us);
 
     // Do this setup here instead of the constructor so we can do
     // some validation of the CompiledCode's fields we read them.
@@ -217,7 +221,7 @@ namespace rubinius {
     total_ = ops_->num_fields();
     stack_ = new int32_t[total_];
 
-    for(native_int i = 0; i < total_; i++) {
+    for(intptr_t i = 0; i < total_; i++) {
       stack_[i] = -1;
     }
 
@@ -313,10 +317,72 @@ namespace rubinius {
         case instructions::data_send_super_stack_with_splat.id:
           verify_symbol_or_nil(state, arg1, insn_ip);
           break;
+        case instructions::data_b_if_serial.id:
+          verify_literal(state, arg1, insn_ip);
+          verify_register(state, arg2, insn_ip);
+          break;
+        case instructions::data_r_load_local.id:
+        case instructions::data_r_store_local.id:
+          verify_register(state, arg1, insn_ip);
+          verify_local(state, arg2, insn_ip);
+          break;
+        case instructions::data_r_load_literal.id:
+          verify_register(state, arg1, insn_ip);
+          verify_literal(state, arg2, insn_ip);
+          break;
+        case instructions::data_r_load_ivar.id:
+        case instructions::data_r_store_ivar.id:
+        case instructions::data_r_load_index.id:
+          verify_register(state, arg1, insn_ip);
+          verify_register(state, arg2, insn_ip);
+          verify_symbol(state, arg3, insn_ip);
+          break;
+        case instructions::data_r_load_nil.id:
+        case instructions::data_r_load_self.id:
+        case instructions::data_r_load_neg1.id:
+        case instructions::data_r_load_0.id:
+        case instructions::data_r_load_1.id:
+        case instructions::data_r_load_2.id:
+        case instructions::data_r_load_false.id:
+        case instructions::data_r_load_true.id:
+        case instructions::data_r_ret.id:
+        case instructions::data_r_refcnt_inc.id:
+        case instructions::data_r_refcnt_dec.id:
+        case instructions::data_r_load_local_depth.id:
+        case instructions::data_r_store_local_depth.id:
+        case instructions::data_r_load_stack.id:
+        case instructions::data_r_store_stack.id:
         case instructions::data_b_if.id:
         case instructions::data_m_log.id:
           verify_register(state, arg1, insn_ip);
           break;
+        case instructions::data_n_ineg.id:
+        case instructions::data_n_ineg_o.id:
+        case instructions::data_n_inot.id:
+        case instructions::data_n_iinc.id:
+        case instructions::data_n_idec.id:
+        case instructions::data_n_ibits.id:
+        case instructions::data_n_isize.id:
+        case instructions::data_n_iflt.id:
+        case instructions::data_n_eneg.id:
+        case instructions::data_n_enot.id:
+        case instructions::data_n_ebits.id:
+        case instructions::data_n_esize.id:
+        case instructions::data_n_eflt.id:
+        case instructions::data_n_dneg.id:
+        case instructions::data_n_dinf.id:
+        case instructions::data_n_dnan.id:
+        case instructions::data_n_dclass.id:
+        case instructions::data_r_load_int.id:
+        case instructions::data_r_store_int.id:
+        case instructions::data_r_load_float.id:
+        case instructions::data_r_store_float.id:
+        case instructions::data_r_load_bool.id:
+        case instructions::data_r_load_m_binops.id:
+        case instructions::data_r_load_f_binops.id:
+        case instructions::data_r_copy.id:
+        case instructions::data_r_load_handle.id:
+        case instructions::data_r_store_handle.id:
         case instructions::data_b_if_int.id:
         case instructions::data_a_instance.id:
         case instructions::data_a_kind.id:
@@ -330,42 +396,7 @@ namespace rubinius {
         case instructions::data_a_less_equal.id:
         case instructions::data_a_greater.id:
         case instructions::data_a_greater_equal.id:
-          verify_register(state, arg1, insn_ip);
-          verify_register(state, arg2, insn_ip);
-          break;
-        case instructions::data_b_if_serial.id:
-          verify_literal(state, arg1, insn_ip);
-          verify_register(state, arg2, insn_ip);
-          break;
-        case instructions::data_r_load_local.id:
-        case instructions::data_r_store_local.id:
-          verify_register(state, arg1, insn_ip);
-          verify_local(state, arg2, insn_ip);
-          break;
-        case instructions::data_r_load_local_depth.id:
-        case instructions::data_r_store_local_depth.id:
-          verify_register(state, arg1, insn_ip);
-          break;
-        case instructions::data_r_load_stack.id:
-        case instructions::data_r_store_stack.id:
-          verify_register(state, arg1, insn_ip);
-          break;
-        case instructions::data_r_load_literal.id:
-          verify_register(state, arg1, insn_ip);
-          verify_literal(state, arg2, insn_ip);
-          break;
-        case instructions::data_r_load_nil.id:
-          verify_register(state, arg1, insn_ip);
-          break;
-        case instructions::data_r_load_0.id:
-        case instructions::data_r_load_1.id:
-        case instructions::data_r_load_false.id:
-        case instructions::data_r_load_true.id:
-          verify_register(state, arg1, insn_ip);
-          break;
-        case instructions::data_r_load_int.id:
-        case instructions::data_r_store_int.id:
-        case instructions::data_r_copy.id:
+        case instructions::data_n_ipopcnt.id:
           verify_register(state, arg1, insn_ip);
           verify_register(state, arg2, insn_ip);
           break;
@@ -377,19 +408,64 @@ namespace rubinius {
         case instructions::data_n_isub_o.id:
         case instructions::data_n_imul_o.id:
         case instructions::data_n_idiv_o.id:
+        case instructions::data_n_imod_o.id:
+        case instructions::data_n_idivmod.id:
+        case instructions::data_n_ipow_o.id:
+        case instructions::data_n_icmp.id:
         case instructions::data_n_ieq.id:
         case instructions::data_n_ine.id:
         case instructions::data_n_ilt.id:
         case instructions::data_n_ile.id:
         case instructions::data_n_igt.id:
         case instructions::data_n_ige.id:
+        case instructions::data_n_istr.id:
+        case instructions::data_n_promote.id:
+        case instructions::data_n_demote.id:
+        case instructions::data_n_eadd.id:
+        case instructions::data_n_esub.id:
+        case instructions::data_n_emul.id:
+        case instructions::data_n_ediv.id:
+        case instructions::data_n_emod.id:
+        case instructions::data_n_edivmod.id:
+        case instructions::data_n_epow.id:
+        case instructions::data_n_eand.id:
+        case instructions::data_n_eor.id:
+        case instructions::data_n_exor.id:
+        case instructions::data_n_eshl.id:
+        case instructions::data_n_eshr.id:
+        case instructions::data_n_epopcnt.id:
+        case instructions::data_n_ecmp.id:
+        case instructions::data_n_eeq.id:
+        case instructions::data_n_ene.id:
+        case instructions::data_n_elt.id:
+        case instructions::data_n_ele.id:
+        case instructions::data_n_egt.id:
+        case instructions::data_n_ege.id:
+        case instructions::data_n_estr.id:
+        case instructions::data_n_dadd.id:
+        case instructions::data_n_dsub.id:
+        case instructions::data_n_dmul.id:
+        case instructions::data_n_ddiv.id:
+        case instructions::data_n_dmod.id:
+        case instructions::data_n_ddivmod.id:
+        case instructions::data_n_dpow.id:
+        case instructions::data_n_dcmp.id:
+        case instructions::data_n_deq.id:
+        case instructions::data_n_dne.id:
+        case instructions::data_n_dlt.id:
+        case instructions::data_n_dle.id:
+        case instructions::data_n_dgt.id:
+        case instructions::data_n_dge.id:
+        case instructions::data_n_dstr.id:
+        case instructions::data_r_load_ref_addr.id:
+        case instructions::data_r_load_byte_addr.id:
+        case instructions::data_r_load_ref.id:
+        case instructions::data_r_store_ref.id:
+        case instructions::data_r_load_byte.id:
+        case instructions::data_r_store_byte.id:
           verify_register(state, arg1, insn_ip);
           verify_register(state, arg2, insn_ip);
           verify_register(state, arg3, insn_ip);
-          break;
-        case instructions::data_n_ipopcnt.id:
-          verify_register(state, arg1, insn_ip);
-          verify_register(state, arg2, insn_ip);
           break;
       }
 
@@ -502,6 +578,8 @@ namespace rubinius {
 
           break;
         case instructions::data_b_if_int.id:
+        case instructions::data_b_if_eint.id:
+        case instructions::data_b_if_float.id:
         case instructions::data_b_if_serial.id:
           verify_jump_location(state, arg3, insn_ip);
 
@@ -516,6 +594,7 @@ namespace rubinius {
         case instructions::data_ensure_return.id:
         case instructions::data_raise_break.id:
         case instructions::data_reraise.id:
+        case instructions::data_r_ret.id:
           return;
       }
 

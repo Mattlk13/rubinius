@@ -26,7 +26,7 @@ namespace rubinius {
    * Thread-local info about native method calls. @see NativeMethodFrame.
    */
   class NativeMethodEnvironment {
-    State state_;
+    ThreadState* state_;
 
     /** Current callframe in Ruby-land. */
     CallFrame*          current_call_frame_;
@@ -62,8 +62,8 @@ namespace rubinius {
 
     Object* block();
 
-    State* state() {
-      return &state_;
+    ThreadState* state() {
+      return state_;
     }
 
     CallFrame* current_call_frame() const {
@@ -88,10 +88,6 @@ namespace rubinius {
 
     void set_current_ep(ExceptionPoint* ep) {
       current_ep_ = ep;
-    }
-
-    SharedState& shared() {
-      return state_.shared();
     }
 
     StackVariables* scope();

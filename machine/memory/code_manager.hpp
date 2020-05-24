@@ -3,13 +3,10 @@
 
 #include "diagnostics.hpp"
 
-#include "util/thread.hpp"
-
 #include <stdint.h>
+#include <mutex>
 
 namespace rubinius {
-  class SharedState;
-
 namespace memory {
   class CodeResource;
 
@@ -50,9 +47,7 @@ namespace memory {
       ~Chunk();
     };
 
-    utilities::thread::Mutex mutex_;
-
-    SharedState* shared_;
+    std::mutex mutex_;
 
     int chunk_size_;
     Chunk* first_chunk_;
@@ -64,21 +59,17 @@ namespace memory {
     diagnostics::CodeManager* diagnostic_;
 
   public:
-    SharedState* shared() const {
-      return shared_;
-    }
-
     diagnostics::CodeManager* diagnostic() {
       return diagnostic_;
     }
 
   public:
-    CodeManager(SharedState* shared, int chunk_size=cDefaultChunkSize);
+    CodeManager(int chunk_size=cDefaultChunkSize);
     ~CodeManager();
 
     void add_resource(CodeResource* cr, bool* collect_now);
     void clear_marks();
-    void sweep();
+    void sweep(STATE);
 
   private:
     void add_chunk();

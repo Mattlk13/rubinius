@@ -1,7 +1,6 @@
 #include <string.h>
 
-#include "vm.hpp"
-#include "state.hpp"
+#include "thread_state.hpp"
 
 #include "memory/code_manager.hpp"
 #include "memory/code_resource.hpp"
@@ -22,8 +21,8 @@ namespace memory {
     delete[] resources;
   }
 
-  CodeManager::CodeManager(SharedState* shared, int chunk_size)
-    : shared_(shared)
+  CodeManager::CodeManager(int chunk_size)
+    : mutex_()
     , chunk_size_(chunk_size)
     , first_chunk_(0)
     , last_chunk_(0)
@@ -67,7 +66,7 @@ namespace memory {
   }
 
   void CodeManager::add_resource(CodeResource* cr, bool* collect_now) {
-    utilities::thread::Mutex::LockGuard guard(mutex_);
+    std::lock_guard<std::mutex> guard(mutex_);
 
     for(;;) {
       while(current_index_ < chunk_size_) {
@@ -90,18 +89,16 @@ namespace memory {
     }
   }
 
-  void CodeManager::sweep() {
+  void CodeManager::sweep(STATE) {
     Chunk* chunk = first_chunk_;
     Chunk* prev  = NULL;
-
-    State state(shared_->root_vm());
 
     while(chunk) {
       bool chunk_used = false;
       for(int i = 0; i < chunk_size_; i++) {
         if(CodeResource* cr = chunk->resources[i]) {
           if(!cr->marked()) {
-            cr->cleanup(&state, this);
+            cr->cleanup(state, this);
             delete cr;
             chunk->resources[i] = 0;
           } else {

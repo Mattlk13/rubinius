@@ -7,6 +7,8 @@
 #include "memory/heap.hpp"
 
 namespace rubinius {
+  class Configuration;
+
   namespace memory {
     class Immix;
     class LargeRegion;
@@ -17,7 +19,7 @@ namespace rubinius {
       CodeManager& code_manager_;
 
     public:
-      MainHeap(STATE, CodeManager& cm);
+      MainHeap(Configuration* configuration, CodeManager& cm);
       virtual ~MainHeap();
 
       Immix* first_region() {
@@ -28,7 +30,7 @@ namespace rubinius {
         return third_region_;
       }
 
-      Object* allocate(STATE, native_int bytes, object_type type);
+      Object* allocate(STATE, intptr_t bytes, object_type type);
 
       void collect_start(STATE);
       void collect_references(STATE, std::function<void (STATE, Object**)> f);

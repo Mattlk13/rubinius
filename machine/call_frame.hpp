@@ -62,13 +62,35 @@ namespace rubinius {
 
     Arguments* arguments;
     Object** stack_ptr_;
+    Object** registers;
     MachineCode* machine_code;
     InterpreterState* is;
 
     UnwindSite* unwind;
 
+    Object* return_value;
+
     // Stack
     Object* stk[0];
+
+    CallFrame()
+      : previous(nullptr)
+      , lexical_scope_(nullptr)
+      , dispatch_data(nullptr)
+      , compiled_code(nullptr)
+      , flags(0)
+      , ip_(0)
+      , top_scope_(nullptr)
+      , scope(nullptr)
+      , arguments(nullptr)
+      , stack_ptr_(nullptr)
+      , registers(nullptr)
+      , machine_code(nullptr)
+      , is(nullptr)
+      , unwind(nullptr)
+      , return_value(nullptr)
+    {
+    }
 
     int ip() const {
       return ip_;
@@ -193,10 +215,13 @@ namespace rubinius {
      */
     void prepare(int stack) {
       ip_ = 0;
+      return_value = nullptr;
 
       for(int i = 0; i < stack; i++) {
         stk[i] = cNil;
       }
+
+      registers = stk + stack;
     }
 
     VariableScope* promote_scope_full(STATE);
@@ -220,7 +245,7 @@ namespace rubinius {
   };
 
 #define ALLOCA_CALL_FRAME(stack_size) \
-  reinterpret_cast<CallFrame*>(alloca(sizeof(CallFrame) + (sizeof(Object*) * (stack_size))))
+  static_cast<uintptr_t*>(alloca(sizeof(CallFrame) + (sizeof(Object*) * (stack_size))))
 };
 
 #endif

@@ -20,16 +20,14 @@ def core_clean
            "**/.*.rbc",
            "#{BUILD_CONFIG[:builddir]}#{BUILD_CONFIG[:codedbdir]}/platform.conf",
            "#{BUILD_CONFIG[:builddir]}#{BUILD_CONFIG[:codedbdir]}/source",
-           "spec/capi/ext/*.{o,sig,#{$dlext}}",
+           "#{BUILD_CONFIG[:prefixdir]}/#{BUILD_CONFIG[:archdir]}/**/*",
            "#{BUILD_CONFIG[:prefixdir]}/#{BUILD_CONFIG[:archdir]}/**/*.*",
-           "#{BUILD_CONFIG[:bootstrap_gems_dir]}/**/Makefile",
-           "#{BUILD_CONFIG[:bootstrap_gems_dir]}/**/.RUBYARCHDIR.*",
+           "spec/capi/ext/*.{o,sig,#{$dlext}}",
           ],
     :verbose => $verbose
 end
 
 codedb_source = []
-codedb_library = []
 
 codedbdir = "#{BUILD_CONFIG[:builddir]}#{BUILD_CONFIG[:codedbdir]}"
 platform_conf = "#{codedbdir}/platform.conf"
@@ -38,9 +36,34 @@ codedb_cache = "#{codedbdir}/cache"
 codedb_cache_next = codedb_cache + ".next"
 
 library_dir = "#{BUILD_CONFIG[:sourcedir]}/library"
-bootstrap_gems_dir = BUILD_CONFIG[:bootstrap_gems_dir]
+codetoolsdir = BUILD_CONFIG[:codetoolsdir]
+stdlibdir = BUILD_CONFIG[:stdlibdir]
 
 core_load_order = "core/load_order.txt"
+
+bzip = BUILD_CONFIG[:bzip]
+tar = BUILD_CONFIG[:tar]
+
+# TODO: these should be proper dependencies
+codedb_cachedir = "#{BUILD_CONFIG[:builddir]}#{BUILD_CONFIG[:codedbdir]}/cache"
+codedb_cache_bzip = "rubinius-codedb-cache.bz2"
+if File.exist? codedb_cache_bzip and not File.directory? codedb_cachedir
+  mkdir_p codedbdir
+  sh "#{bzip} -c -d #{codedb_cache_bzip} > #{codedb_cachedir}"
+end
+
+codetools_cache_bzip = "rubinius-codetools-cache.bz2"
+if File.exist? codetools_cache_bzip and not File.directory? codetoolsdir
+
+  mkdir_p codetoolsdir
+  sh "#{tar} -C #{codetoolsdir} -xzf #{BUILD_CONFIG[:sourcedir]}/#{codetools_cache_bzip}"
+end
+
+stdlib_cache_bzip = "rubinius-stdlib-cache.bz2"
+if File.exist? stdlib_cache_bzip and not File.directory? stdlibdir
+  mkdir_p stdlibdir
+  sh "#{tar} -C #{stdlibdir} -xzf #{BUILD_CONFIG[:sourcedir]}/#{stdlib_cache_bzip}"
+end
 
 def codedb_source_task(db, origin, source)
   db << source
@@ -60,33 +83,29 @@ IO.foreach core_load_order do |name|
   codedb_source_task codedb_source, origin, "#{codedbdir}/source/#{origin}"
 end
 
-# Add library files
-FileList["#{library_dir}/**/*.rb"].each do |file|
-  source = "#{codedbdir}/source/#{file[(library_dir.size+1)..-1]}"
-
-  codedb_source_task codedb_source, file, source
-end
-
-FileList["#{library_dir}/**/*.*"].exclude("#{library_dir}/**/*.rb").each do |file|
+FileList["#{library_dir}/**/*.*"].each do |file|
   source = "#{codedbdir}/source/#{file[(library_dir.size+1)..-1]}"
 
   unless File.directory? file
-    codedb_source_task codedb_library, file, source
+    codedb_source_task codedb_source, file, source
   end
 end
 
-# Add pre-installed gems
-FileList["#{bootstrap_gems_dir}/*/{lib,ext}/**/*.rb"]
-  .exclude("#{bootstrap_gems_dir}/{bundler-*,minitest-*,racc-*,rake-*,rdoc-*,*-readline*}/**/*.*")
-  .each do |file|
+# Add codetools
+FileList["#{codetoolsdir}/{lib,ext}/**/*.rb"].each do |file|
+  source = "#{codedbdir}/source/#{file[(codetoolsdir.size+5)..-1]}"
 
-  m = %r[#{bootstrap_gems_dir}/[^/]+/(lib|ext)/(.*\.rb)$].match file
-
-  if m and m[2]
-    source = "#{codedbdir}/source/#{m[2]}"
+  unless File.directory? file
     codedb_source_task codedb_source, file, source
-  else
-    raise RuntimeError, "pre-installed gem file not matched: #{file}"
+  end
+end
+
+# Add stdlib
+FileList["#{stdlibdir}/{lib,ext}/**/*.rb"].each do |file|
+  source = "#{codedbdir}/source/#{file[(stdlibdir.size+5)..-1]}"
+
+  unless File.directory? file
+    codedb_source_task codedb_source, file, source
   end
 end
 
@@ -98,25 +117,24 @@ config_files = FileList[
 ]
 
 ext_source = FileList[
-  "#{bootstrap_gems_dir}/**/*.{c,h}pp",
-  "#{bootstrap_gems_dir}/**/grammar.y",
-  "#{bootstrap_gems_dir}/**/lex.c.*"
+  "#{stdlibdir}/**/*.{c,h}pp",
+  "#{stdlibdir}/**/grammar.y",
+  "#{stdlibdir}/**/lex.c.*",
+  "#{codetoolsdir}/**/*.{c,h}pp",
+  "#{codetoolsdir}/**/grammar.y",
+  "#{codetoolsdir}/**/lex.c.*",
 ]
 
-melbourne_ext = FileList["#{bootstrap_gems_dir}/rubinius-melbourne*/ext/**/extconf.rb"]
-extconf_source = FileList["#{bootstrap_gems_dir}/**/{lib,ext}/**/extconf.rb"
-                         ].exclude(melbourne_ext)
-                          .exclude("#{bootstrap_gems_dir}/{bundler-*,minitest-*,racc-*,rake-*,rdoc-*,*-readline*}/**/*.*")
+melbourne_ext = FileList["#{codetoolsdir}/ext/**/melbourne/extconf.rb"].first
+extconf_source = FileList["#{stdlibdir}/ext/**/extconf.rb"]
 
 extensions_dir = "#{BUILD_CONFIG[:builddir]}/#{BUILD_CONFIG[:archdir]}"
 directory extensions_dir
 
 signature_files = codedb_source + config_files + ext_source
 
-def build_extension(gems_dir, file)
+def build_extension(file, melbourne=false)
   FileUtils.mkdir_p "#{BUILD_CONFIG[:builddir]}#{BUILD_CONFIG[:includedir]}/ruby/digest"
-
-  extconf = %r[#{gems_dir}/[^/]+/(lib|ext)/(.*\.rb)$].match(file)[2]
 
   Dir.chdir File.dirname(file) do
     if file =~ /openssl/ and openssl = ENV["OPENSSL_DIR"]
@@ -125,18 +143,30 @@ def build_extension(gems_dir, file)
       options = nil
     end
 
+    ignore = false
+
     unless File.exist? "Makefile"
       begin
         ENV["RBX_PREFIX_PATH"] = BUILD_CONFIG[:builddir]
 
-        sh "#{BUILD_CONFIG[:build_exe]} -v --disable-gems --main #{extconf} #{options}", :verbose => $verbose
+        extconf = melbourne ? "--main rubinius/code/melbourne/extconf.rb" : "extconf.rb"
+
+        sh "#{BUILD_CONFIG[:build_exe]} -v --disable-gems #{extconf} #{options}",
+           :verbose => $verbose do |ok, result|
+          unless ok
+            puts "#{file} failed to run, skipping C-extension"
+            ignore = true
+          end
+       end
       ensure
         ENV.delete "RBX_PREFIX_PATH"
       end
     end
 
-    sh "#{BUILD_CONFIG[:build_make]}", :verbose => $verbose
-    sh "#{BUILD_CONFIG[:build_make]} install", :verbose => $verbose
+    unless ignore
+      sh "#{BUILD_CONFIG[:build_make]}", :verbose => $verbose
+      sh "#{BUILD_CONFIG[:build_make]} install", :verbose => $verbose
+    end
   end
 end
 
@@ -161,18 +191,14 @@ namespace :codedb do
       ENV["LDSHAREDXX"] = BUILD_CONFIG[:ldsharedxx]
       ENV["LDFLAGS"] = BUILD_CONFIG[:system_ldflags]
 
-      melbourne_ext.each do |file|
-        build_extension bootstrap_gems_dir, file
+      build_extension melbourne_ext, true
 
-        ext_dir = %r[(#{bootstrap_gems_dir}/[^/]+)/.*$].match(file)[1]
+      Dir.chdir "#{codetoolsdir}/lib" do
+        FileList["./**/*.#{RbConfig::CONFIG["DLEXT"]}"].each do |lib|
+          lib_dir = "#{extensions_dir}/#{File.dirname(lib)}"
+          mkdir_p lib_dir
 
-        Dir.chdir "#{ext_dir}/lib" do
-          FileList["./**/*.#{RbConfig::CONFIG["DLEXT"]}"].each do |lib|
-            lib_dir = "#{extensions_dir}/#{File.dirname(lib)}"
-            mkdir_p lib_dir
-
-            cp lib, lib_dir, :verbose => $verbose
-          end
+          cp lib, lib_dir, :verbose => $verbose
         end
       end
     ensure
@@ -200,7 +226,7 @@ namespace :codedb do
     end
 
     extconf_source.each do |file|
-      build_extension bootstrap_gems_dir, file
+      build_extension file
     end
   end
 end
@@ -225,10 +251,23 @@ task :core => 'core:build'
 
 namespace :core do
   desc "Build all core and library files"
-  task :build => [platform_conf, signature_header] + codedb_source + codedb_library + ["codedb:extensions"]
+  task :build => [platform_conf, signature_header] +
+                 [codedbdir, codetoolsdir, stdlibdir] +
+                 codedb_source + ["codedb:extensions"]
 
   desc "Delete all core and library artifacts"
   task :clean do
     core_clean
+  end
+
+  task :distclean => :clean do
+  rm_rf Dir["#{BUILD_CONFIG[:sourcedir]}/rubinius-codedb-cache*",
+           "#{BUILD_CONFIG[:sourcedir]}/rubinius-codetools-cache*",
+           "#{BUILD_CONFIG[:sourcedir]}/rubinius-stdlib-cache*",
+           codedbdir,
+           codetoolsdir,
+           stdlibdir,
+          ],
+    :verbose => $verbose
   end
 end

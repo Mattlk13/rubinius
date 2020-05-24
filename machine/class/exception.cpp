@@ -30,7 +30,7 @@ namespace rubinius {
   void Exception::print_locations(STATE) {
     if(locations()->nil_p()) return;
 
-    for(native_int i = 0; i < locations()->size(); i++) {
+    for(intptr_t i = 0; i < locations()->size(); i++) {
       if(Location* loc = try_as<Location>(locations()->get(state, i))) {
         if(CompiledCode* meth = try_as<CompiledCode>(loc->method())) {
           if(Symbol* file_sym = try_as<Symbol>(meth->file())) {
@@ -205,12 +205,12 @@ namespace rubinius {
 
     std::ostringstream msg;
 
-    TypeInfo* wanted = state->vm()->find_type(type);
+    TypeInfo* wanted = state->memory()->find_type(type);
 
     if(!object->reference_p()) {
       msg << "Tried to use non-reference value " << object;
     } else {
-      TypeInfo* was = state->vm()->find_type(object->type_id());
+      TypeInfo* was = state->memory()->find_type(object->type_id());
       msg << "Tried to use object of type " <<
         was->type_name << " (" << was->type << ")";
     }
@@ -288,12 +288,12 @@ namespace rubinius {
   }
 
   void Exception::raise_object_bounds_exceeded_error(STATE, Object* obj, int index) {
-    TypeInfo* info = state->vm()->find_type(obj->type_id()); // HACK use object
+    TypeInfo* info = state->memory()->find_type(obj->type_id()); // HACK use object
     std::ostringstream msg;
 
     msg << "Bounds of object exceeded:" << std::endl;
     msg << "      type: " << info->type_name << ", bytes: " <<
-           obj->body_in_bytes(state->vm()) << ", accessed: " << index << std::endl;
+           obj->body_in_bytes(state) << ", accessed: " << index << std::endl;
 
     RubyException::raise(make_exception(state, get_object_bounds_exceeded_error(state),
                                         msg.str().c_str()));

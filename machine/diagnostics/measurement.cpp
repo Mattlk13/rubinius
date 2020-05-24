@@ -1,8 +1,6 @@
 #include "configuration.hpp"
 #include "environment.hpp"
-#include "shared_state.hpp"
-#include "state.hpp"
-#include "vm.hpp"
+#include "thread_state.hpp"
 #include "call_frame.hpp"
 #include "diagnostics.hpp"
 
@@ -10,7 +8,7 @@
 
 #include "diagnostics/measurement.hpp"
 
-#include <ostream>
+#include <sstream>
 
 namespace rubinius {
   namespace diagnostics {

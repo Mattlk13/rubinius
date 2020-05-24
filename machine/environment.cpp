@@ -1,5 +1,6 @@
 #include "config.h"
 #include "paths.h"
+#include "c_api.hpp"
 #include "defines.hpp"
 #include "environment.hpp"
 #include "config_parser.hpp"
@@ -26,7 +27,7 @@
 
 #include "memory/collector.hpp"
 
-#include "signal.hpp"
+#include "signals.hpp"
 #include "object_utils.hpp"
 
 #include "on_stack.hpp"
@@ -64,28 +65,25 @@
 
 namespace rubinius {
 
-  Environment::Environment(int argc, char** argv)
+  Environment::Environment(int argc, char** argv, Machine* m)
     : argc_(argc)
     , argv_(0)
-    , fork_exec_lock_()
-    , halt_lock_()
-    , collector_(NULL)
-    , loader_(NULL)
+    , _machine_(m)
+    , _nodename_()
+    , _username_()
+    , _pid_()
   {
     String::init_hash();
+
+    set_nodename();
+    set_username();
+    set_pid();
 
     copy_argv(argc, argv);
     ruby_init_setproctitle(argc, argv);
 
-    shared = new SharedState(this, config, config_parser);
-
-    load_vm_options(argc_, argv_);
-
-    check_io_descriptors();
-
-    root_vm = shared->thread_nexus()->new_vm(shared, "ruby.main");
+    state = root_vm = _machine_->threads()->create_thread_state("ruby.main");
     root_vm->set_main_thread();
-    shared->set_root_vm(root_vm);
 
     size_t stack_size = 0;
     struct rlimit rlim;
@@ -96,17 +94,19 @@ namespace rubinius {
 
     root_vm->set_stack_bounds(stack_size);
     root_vm->set_current_thread();
+  }
 
-    state = new State(root_vm);
+  void Environment::initialize() {
+    load_vm_options(argc_, argv_);
 
-    loader_ = new memory::TypedRoot<Object*>(state);
+    check_io_descriptors();
 
     NativeMethod::init_thread(state);
 
     start_logging(state);
     log_argv();
 
-    if(config.log_config.value) {
+    if(_machine_->configuration()->log_config.value) {
       std::string options;
 
       config_parser.parsed_options(options);
@@ -117,18 +117,10 @@ namespace rubinius {
   }
 
   Environment::~Environment() {
-    delete collector_;
-
-    VM::discard(state, root_vm);
-    delete shared;
-    delete state;
-
     for(int i = 0; i < argc_; i++) {
       delete[] argv_[i];
     }
     delete[] argv_;
-
-    stop_logging(state);
   }
 
   void cpp_exception_bug() {
@@ -136,7 +128,7 @@ namespace rubinius {
     logger::fatal("Please report this with the following backtrace to " \
         "https://github.com/rubinius/rubinius/issues");
 
-    rubinius::abort();
+    rubinius::bug();
   }
 
   void Environment::setup_cpp_terminate() {
@@ -154,7 +146,7 @@ namespace rubinius {
   }
 
   void Environment::check_io_descriptors() {
-    std::string dir = config.tmp_path.value;
+    std::string dir = _machine_->configuration()->tmp_path.value;
 
     if(fcntl(STDIN_FILENO, F_GETFD) < 0 && errno == EBADF) {
       assign_io_descriptor(dir, STDIN_FILENO, "stdin");
@@ -169,39 +161,35 @@ namespace rubinius {
     }
   }
 
-  void Environment::stop_logging(STATE) {
-    logger::close();
-  }
-
   void Environment::start_logging(STATE) {
     logger::logger_level level = logger::eWarn;
 
-    if(!config.log_level.value.compare("fatal")) {
+    if(!_machine_->configuration()->log_level.value.compare("fatal")) {
       level = logger::eFatal;
-    } else if(!config.log_level.value.compare("error")) {
+    } else if(!_machine_->configuration()->log_level.value.compare("error")) {
       level = logger::eError;
-    } else if(!config.log_level.value.compare("warn")) {
+    } else if(!_machine_->configuration()->log_level.value.compare("warn")) {
       level = logger::eWarn;
-    } else if(!config.log_level.value.compare("info")) {
+    } else if(!_machine_->configuration()->log_level.value.compare("info")) {
       level = logger::eInfo;
-    } else if(!config.log_level.value.compare("debug")) {
+    } else if(!_machine_->configuration()->log_level.value.compare("debug")) {
       level = logger::eDebug;
     }
 
-    if(!config.log_target.value.compare("syslog")) {
+    if(!_machine_->configuration()->log_target.value.compare("syslog")) {
       logger::open(logger::eSyslog, level, RBX_PROGRAM_NAME);
-    } else if(!config.log_target.value.compare("console")) {
+    } else if(!_machine_->configuration()->log_target.value.compare("console")) {
       logger::open(logger::eConsoleLogger, level, RBX_PROGRAM_NAME);
     } else {
-      expand_config_value(config.log_target.value, "$TMPDIR", config.tmp_path);
-      expand_config_value(config.log_target.value, "$PROGRAM_NAME", RBX_PROGRAM_NAME);
-      expand_config_value(config.log_target.value, "$USER", shared->username.c_str());
+      expand_config_value(_machine_->configuration()->log_target.value, "$TMPDIR", _machine_->configuration()->tmp_path);
+      expand_config_value(_machine_->configuration()->log_target.value, "$PROGRAM_NAME", RBX_PROGRAM_NAME);
+      expand_config_value(_machine_->configuration()->log_target.value, "$USER", _username_.c_str());
 
       logger::open(logger::eFileLogger, level,
-          config.log_target.value.c_str(),
-          config.log_limit.value,
-          config.log_archives.value,
-          config.log_access.value);
+          _machine_->configuration()->log_target.value.c_str(),
+          _machine_->configuration()->log_limit.value,
+          _machine_->configuration()->log_archives.value,
+          _machine_->configuration()->log_access.value);
     }
   }
 
@@ -321,11 +309,9 @@ namespace rubinius {
       }
     }
 
-    config_parser.update_configuration(config);
+    config_parser.update_configuration(_machine_->configuration());
 
     set_tmp_path();
-    set_username();
-    set_pid();
     set_console_path();
     set_codedb_paths();
   }
@@ -341,7 +327,7 @@ namespace rubinius {
   }
 
   void Environment::set_tmp_path() {
-    if(!config.tmp_path.value.compare("$TMPDIR")) {
+    if(!_machine_->configuration()->tmp_path.value.compare("$TMPDIR")) {
       std::ostringstream path;
       const char* tmp = getenv("TMPDIR");
 
@@ -352,51 +338,56 @@ namespace rubinius {
         path << "/tmp/";
       }
 
-      config.tmp_path.value.assign(path.str());
+      _machine_->configuration()->tmp_path.value.assign(path.str());
     }
+  }
+
+  void Environment::set_nodename() {
+    uname(&_machine_info_);
+    _nodename_.assign(_machine_info_.nodename);
   }
 
   void Environment::set_username() {
     struct passwd *user_passwd = getpwuid(getuid());
 
-    shared->username.assign(user_passwd->pw_name);
+    _username_.assign(user_passwd->pw_name);
   }
 
   void Environment::set_pid() {
-    shared->pid.assign(std::to_string(getpid()));
+    _pid_.assign(std::to_string(getpid()));
   }
 
   void Environment::set_console_path() {
-    std::string path(config.console_path.value);
+    std::string path(_machine_->configuration()->console_path.value);
 
-    expand_config_value(path, "$TMPDIR", config.tmp_path);
+    expand_config_value(path, "$TMPDIR", _machine_->configuration()->tmp_path);
     expand_config_value(path, "$PROGRAM_NAME", RBX_PROGRAM_NAME);
-    expand_config_value(path, "$USER", shared->username.c_str());
+    expand_config_value(path, "$USER", _username_.c_str());
 
-    config.console_path.value.assign(path);
+    _machine_->configuration()->console_path.value.assign(path);
   }
 
   void Environment::set_codedb_paths() {
-    if(config.codedb_core_path.value.size() == 0) {
-      config.codedb_core_path.value.assign(system_prefix() + RBX_CODEDB_PATH);
+    if(_machine_->configuration()->codedb_core_path.value.size() == 0) {
+      _machine_->configuration()->codedb_core_path.value.assign(system_prefix() + RBX_CODEDB_PATH);
     }
 
-    std::string cache_path(config.codedb_cache_path.value);
+    std::string cache_path(_machine_->configuration()->codedb_cache_path.value);
 
-    expand_config_value(cache_path, "$TMPDIR", config.tmp_path);
+    expand_config_value(cache_path, "$TMPDIR", _machine_->configuration()->tmp_path);
     expand_config_value(cache_path, "$PROGRAM_NAME", RBX_PROGRAM_NAME);
-    expand_config_value(cache_path, "$USER", shared->username.c_str());
+    expand_config_value(cache_path, "$USER", _username_.c_str());
 
-    config.codedb_cache_path.value.assign(cache_path);
+    _machine_->configuration()->codedb_cache_path.value.assign(cache_path);
   }
 
-  void Environment::load_argv(int argc, char** argv) {
+  void Environment::load_command_line(STATE) {
     String* str = 0;
     Encoding* enc = Encoding::default_external(state);
 
-    Array* os_ary = Array::create(state, argc);
-    for(int i = 0; i < argc; i++) {
-      str = String::create(state, argv[i]);
+    Array* os_ary = Array::create(state, argc_);
+    for(int i = 0; i < argc_; i++) {
+      str = String::create(state, argv_[i]);
       str->encoding(state, enc);
       os_ary->set(state, i, str);
     }
@@ -408,16 +399,16 @@ namespace rubinius {
     str->encoding(state, enc);
     G(rubinius)->set_const(state, "OS_STARTUP_DIR", str);
 
-    str = String::create(state, argv[0]);
+    str = String::create(state, argv_[0]);
     str->encoding(state, enc);
     G(object)->set_const(state, "ARG0", str);
 
-    Array* ary = Array::create(state, argc - 1);
+    Array* ary = Array::create(state, argc_ - 1);
     int which_arg = 0;
     bool skip_xflags = true;
 
-    for(int i=1; i < argc; i++) {
-      char* arg = argv[i];
+    for(int i=1; i < argc_; i++) {
+      char* arg = argv_[i];
 
       if(strcmp(arg, "--") == 0) {
         skip_xflags = false;
@@ -436,15 +427,15 @@ namespace rubinius {
     G(object)->set_const(state, "ARGV", ary);
 
     // Now finish up with the config
-    if(config.print_config > 1) {
+    if(_machine_->configuration()->print_config > 1) {
       std::cout << "========= Configuration =========\n";
-      config.print(true);
+      _machine_->configuration()->print(true);
       std::cout << "=================================\n";
-    } else if(config.print_config) {
-      config.print();
+    } else if(_machine_->configuration()->print_config) {
+      _machine_->configuration()->print();
     }
 
-    state->shared().set_use_capi_lock(config.capi_lock);
+    _machine_->c_api()->set_use_capi_lock(_machine_->configuration()->capi_lock);
   }
 
   void Environment::load_platform_conf(std::string dir) {
@@ -473,10 +464,6 @@ namespace rubinius {
   }
 
   void Environment::after_fork_child(STATE) {
-    fork_exec_lock_.unlock();
-    halt_lock_.try_lock();
-    halt_lock_.unlock();
-
     set_pid();
 
     restart_logging(state);
@@ -504,35 +491,6 @@ namespace rubinius {
     exit(1);
   }
 
-  void Environment::halt(STATE, int exit_code) {
-    std::lock_guard<std::mutex> guard(halt_lock_);
-
-    state->shared().set_halting();
-
-    if(state->shared().config.log_lifetime.value) {
-      logger::write("process: exit: %s %d %lld %fs %fs",
-          shared->pid.c_str(), exit_code,
-          shared->codedb_metrics()->load_count,
-          timer::elapsed_seconds(shared->codedb_metrics()->load_ns),
-          shared->run_time());
-    }
-
-    shared->machine_threads()->shutdown(state);
-
-    shared->thread_nexus()->halt(state, state->vm());
-
-    shared->collector()->dispose(state);
-    shared->collector()->finish(state);
-
-    if(!G(coredb)->nil_p()) G(coredb)->close(state);
-
-    NativeMethod::cleanup_thread(state);
-
-    state->shared().signals()->stop(state);
-
-    exit(exit_code);
-  }
-
   /**
    * Loads the runtime core library files stored in runtime/core. This method
    * is called after the VM has completed bootstrapping, and is ready to load
@@ -541,8 +499,8 @@ namespace rubinius {
   void Environment::load_core(STATE) {
     MachineException::guard(state, false, [&]{
         CodeDB::open(state,
-            config.codedb_core_path.value,
-            config.codedb_cache_path.value);
+            _machine_->configuration()->codedb_core_path.value,
+            _machine_->configuration()->codedb_cache_path.value);
       });
   }
 
@@ -660,68 +618,5 @@ namespace rubinius {
     error.append(failure_reason);
 
     missing_core(error.c_str());
-  }
-
-  void Environment::boot() {
-    state->shared().start_diagnostics(state);
-
-    std::string codedb_path = system_prefix() + RBX_CODEDB_PATH;
-
-    {
-      timer::StopWatch<timer::microseconds> timer(
-          state->shared().boot_metrics()->platform_us);
-
-      load_platform_conf(codedb_path);
-    }
-
-    {
-      timer::StopWatch<timer::microseconds> timer(
-          state->shared().boot_metrics()->memory_us);
-
-      shared->om = new Memory(state);
-    }
-
-    shared->set_initialized();
-
-    state->vm()->managed_phase(state);
-
-    {
-      timer::StopWatch<timer::microseconds> timer(
-          state->shared().boot_metrics()->fields_us);
-
-      TypeInfo::auto_learn_fields(state);
-    }
-
-    {
-      timer::StopWatch<timer::microseconds> timer(
-          state->shared().boot_metrics()->ontology_us);
-
-      state->vm()->bootstrap_ontology(state);
-    }
-
-    load_argv(argc_, argv_);
-
-    // Start the main Ruby thread.
-    Thread* main = 0;
-    OnStack<1> os(state, main);
-
-    {
-      timer::StopWatch<timer::microseconds> timer(
-          state->shared().boot_metrics()->main_thread_us);
-
-      main = Thread::create(state, state->vm(), Thread::main_thread);
-      main->start_thread(state, Thread::run);
-    }
-
-    // TODO: GC improve this
-    shared->om->collector()->start(state);
-
-    VM* vm = SignalThread::new_vm(state);
-    vm->set_stack_bounds(state->vm()->stack_size());
-
-    State main_state(vm);
-    state->shared().start_signals(&main_state);
-
-    state->shared().set_running();
   }
 }

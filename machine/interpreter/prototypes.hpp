@@ -147,6 +147,8 @@ namespace rubinius {
     // Branching instructions
     intptr_t b_if_serial(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
     intptr_t b_if_int(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t b_if_eint(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t b_if_float(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
     intptr_t b_if(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
 
     // Register movement instructions
@@ -159,22 +161,63 @@ namespace rubinius {
     intptr_t r_load_literal(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
     intptr_t r_load_int(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
     intptr_t r_store_int(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t r_load_float(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t r_store_float(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t r_load_ref_addr(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t r_load_byte_addr(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t r_load_ref(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t r_store_ref(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t r_load_byte(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t r_store_byte(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t r_load_handle(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t r_store_handle(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t r_load_ivar(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t r_store_ivar(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t r_load_index(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t r_load_self(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t r_load_neg1(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
     intptr_t r_load_0(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
     intptr_t r_load_1(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t r_load_2(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
     intptr_t r_load_nil(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
     intptr_t r_load_false(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
     intptr_t r_load_true(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t r_load_bool(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t r_load_m_binops(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t r_load_f_binops(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
     intptr_t r_copy(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t r_ret(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t r_refcnt_inc(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t r_refcnt_dec(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
 
     // Native signed integer instructions
     intptr_t n_iadd(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
     intptr_t n_isub(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
     intptr_t n_imul(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
     intptr_t n_idiv(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_imod(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_ineg(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_iinc(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_idec(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_ibits(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_isize(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_inot(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_iand(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_ior(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_ixor(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_ishl(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_ishr(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
     intptr_t n_iadd_o(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
     intptr_t n_isub_o(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
     intptr_t n_imul_o(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
     intptr_t n_idiv_o(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_imod_o(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_idivmod(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_ipow_o(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_ineg_o(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_ishl_o(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_ishr_o(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_icmp(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
     intptr_t n_ieq(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
     intptr_t n_ine(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
     intptr_t n_ilt(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
@@ -182,6 +225,61 @@ namespace rubinius {
     intptr_t n_igt(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
     intptr_t n_ige(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
     intptr_t n_ipopcnt(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_istr(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_iflt(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+
+    intptr_t n_promote(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_demote(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+
+    // Native signed extended integer instructions
+    intptr_t n_eadd(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_esub(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_emul(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_ediv(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_emod(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_edivmod(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_epow(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_eneg(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_ebits(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_esize(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_enot(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_eand(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_eor(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_exor(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_eshl(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_eshr(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_epopcnt(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_ecmp(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_eeq(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_ene(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_elt(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_ele(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_egt(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_ege(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_estr(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_eflt(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+
+    // Native double floating point instructions
+    intptr_t n_dadd(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_dsub(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_dmul(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_ddiv(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_dmod(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_ddivmod(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_dpow(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_dneg(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_dcmp(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_deq(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_dne(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_dlt(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_dle(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_dgt(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_dge(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_dstr(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_dinf(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_dnan(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_dclass(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
+    intptr_t n_dsign(STATE, CallFrame* call_frame, intptr_t const opcodes[]);
 
     // Code execution instructions
     intptr_t e_cache_method_p(STATE, CallFrame* call_frame, intptr_t const opcodes[]);

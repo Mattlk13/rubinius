@@ -82,7 +82,7 @@ namespace rubinius {
     } else if(obj->kind_of_p(state, G(object)->get_const(state, "Complex"))) {
       put_complex(obj);
     } else if(InstructionSequence* iseq = try_as<InstructionSequence>(obj)) {
-      native_int size = iseq->opcodes()->num_fields();
+      intptr_t size = iseq->opcodes()->num_fields();
 
       stream << "i\n" << size << "\n";
 
@@ -203,14 +203,14 @@ namespace rubinius {
 
     if(count >= STACK_BUF_SZ) {
       malloc_data = (char*)malloc(count + 1);
-      if(!malloc_data) rubinius::abort();
+      if(!malloc_data) rubinius::bug();
       data = malloc_data;
     }
 
     stream.read(data, count + 1);
     data[count] = 0; // clamp
 
-    Object* cls = state->vm()->path2class(data);
+    Object* cls = state->path2class(state, data);
 
     if(malloc_data) {
       free(malloc_data);
@@ -229,7 +229,7 @@ namespace rubinius {
 
     if(count >= STACK_BUF_SZ) {
       malloc_data = (char*)malloc(count + 1);
-      if(!malloc_data) rubinius::abort();
+      if(!malloc_data) rubinius::bug();
       data = malloc_data;
     }
 
@@ -329,7 +329,7 @@ namespace rubinius {
 
     if(count >= STACK_BUF_SZ) {
       malloc_data = (char*)malloc(count + 1);
-      if(!malloc_data) rubinius::abort();
+      if(!malloc_data) rubinius::bug();
       data = malloc_data;
     }
 

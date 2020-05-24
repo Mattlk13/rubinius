@@ -2,6 +2,7 @@
 #include "memory.hpp"
 #include "object_utils.hpp"
 #include "on_stack.hpp"
+#include "primitives.hpp"
 #include "thread_phase.hpp"
 #include "windows_compat.h"
 
@@ -24,8 +25,6 @@
 #include "object_utils.hpp"
 #include "on_stack.hpp"
 #include "ontology.hpp"
-
-#include "util/spinlock.hpp"
 
 #include <sstream>
 #include <unistd.h>
@@ -59,7 +58,7 @@ namespace rubinius {
     return io;
   }
 
-  native_int IO::open_with_cloexec(STATE, const char* path, int mode, int permissions) {
+  intptr_t IO::open_with_cloexec(STATE, const char* path, int mode, int permissions) {
     if(Class* fd_class = try_as<Class>(G(io)->get_const(state, "FileDescriptor"))) {
       Tuple* args = Tuple::from(state, 3,
           String::create(state, path),
@@ -79,7 +78,7 @@ namespace rubinius {
     }
   }
 
-  native_int IO::descriptor(STATE) {
+  intptr_t IO::descriptor(STATE) {
     if(Fixnum* fd = try_as<Fixnum>(send(state, state->symbol("descriptor")))) {
       return fd->to_native();
     }
@@ -173,11 +172,11 @@ namespace rubinius {
     OnStack<1> variables(state, buffer);
 
     ssize_t bytes_read;
-    native_int t = type->to_native();
+    intptr_t t = type->to_native();
 
   retry:
-    state->vm()->interrupt_with_signal();
-    state->vm()->thread()->sleep(state, cTrue);
+    state->interrupt_with_signal();
+    state->set_thread_sleep();
 
     {
       UnmanagedPhase unmanaged(state);
@@ -188,19 +187,19 @@ namespace rubinius {
                             (struct sockaddr*)buf, &alen);
     }
 
-    state->vm()->thread()->sleep(state, cFalse);
-    state->vm()->clear_waiter();
+    state->set_thread_run();
+    state->clear_waiter();
 
     if(bytes_read == -1) {
       if(errno == EINTR) {
-        if(state->vm()->thread_interrupted_p(state)) return NULL;
+        if(state->thread_interrupted_p()) return nullptr;
         ensure_open(state);
         goto retry;
       } else {
         Exception::raise_errno_error(state, "read(2) failed");
       }
 
-      return NULL;
+      return nullptr;
     }
 
     buffer->num_bytes(state, Fixnum::from(bytes_read));
@@ -279,13 +278,13 @@ namespace rubinius {
       while(*p != ']') {
         const char *t1 = p;
         if(escape && *t1 == '\\') t1++;
-        if(!*t1) return NULL;
+        if(!*t1) return nullptr;
 
         p = Next(t1);
         if(p[0] == '-' && p[1] != ']') {
           const char *t2 = p + 1;
           if(escape && *t2 == '\\') t2++;
-          if(!*t2) return NULL;
+          if(!*t2) return nullptr;
 
           p = Next(t2);
           if(!ok && Compare(t1, s) <= 0 && Compare(s, t2) <= 0) ok = 1;
@@ -294,7 +293,7 @@ namespace rubinius {
         }
       }
 
-      return ok == nope ? NULL : (char *)p + 1;
+      return ok == nope ? nullptr : (char *)p + 1;
     }
     /* If FNM_PATHNAME is set, only path element will be matched. (upto '/' or '\0')
        Otherwise, entire string will be matched.
@@ -437,7 +436,7 @@ failed: /* try next '*' position */
 
     fd = io->descriptor(state);
 
-    msg.msg_name = NULL;
+    msg.msg_name = nullptr;
     msg.msg_namelen = 0;
 
     /* Linux and Solaris doesn't work if msg_iov is NULL. */
@@ -479,7 +478,7 @@ failed: /* try next '*' position */
     struct cmsghdr *cmsg;
     char cmsg_buf[cmsg_space];
 
-    msg.msg_name = NULL;
+    msg.msg_name = nullptr;
     msg.msg_namelen = 0;
 
     /* Linux and Solaris doesn't work if msg_iov is NULL. */
@@ -507,20 +506,20 @@ failed: /* try next '*' position */
     int code = -1;
 
   retry:
-    state->vm()->interrupt_with_signal();
-    state->vm()->thread()->sleep(state, cTrue);
+    state->interrupt_with_signal();
+    state->set_thread_sleep();
 
     {
       UnmanagedPhase unmanaged(state);
       code = recvmsg(read_fd, &msg, 0);
     }
 
-    state->vm()->thread()->sleep(state, cFalse);
-    state->vm()->clear_waiter();
+    state->set_thread_run();
+    state->clear_waiter();
 
     if(code == -1) {
       if(errno == EAGAIN || errno == EINTR) {
-        if(state->vm()->thread_interrupted_p(state)) return NULL;
+        if(state->thread_interrupted_p()) return nullptr;
         ensure_open(state);
         goto retry;
       }
@@ -564,7 +563,7 @@ failed: /* try next '*' position */
   }
 
   Object* FDSet::set(STATE, Fixnum* descriptor) {
-    native_int fd = descriptor->to_native();
+    intptr_t fd = descriptor->to_native();
 
     FD_SET((int_fd_t)fd, (fd_set*)descriptor_set);
 
@@ -572,7 +571,7 @@ failed: /* try next '*' position */
   }
 
   Object* FDSet::is_set(STATE, Fixnum* descriptor) {
-    native_int fd = descriptor->to_native();
+    intptr_t fd = descriptor->to_native();
 
     if (FD_ISSET(fd, (fd_set*)descriptor_set)) {
       return cTrue;

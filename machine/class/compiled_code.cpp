@@ -21,6 +21,7 @@
 #include "class/string.hpp"
 #include "class/symbol.hpp"
 #include "class/tuple.hpp"
+#include "class/unwind_state.hpp"
 
 #include "memory/collector.hpp"
 
@@ -32,7 +33,7 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <ostream>
+#include <sstream>
 
 
 namespace rubinius {
@@ -114,8 +115,8 @@ namespace rubinius {
   int CompiledCode::line(int ip) {
     if(lines()->nil_p()) return -3;
 
-    native_int fin = lines()->num_fields() - 2;
-    for(native_int i = 0; i < fin; i += 2) {
+    intptr_t fin = lines()->num_fields() - 2;
+    for(intptr_t i = 0; i < fin; i += 2) {
       Fixnum* start_ip = as<Fixnum>(lines()->at(i));
       Fixnum* end_ip   = as<Fixnum>(lines()->at(i+2));
 
@@ -129,7 +130,7 @@ namespace rubinius {
 
   MachineCode* CompiledCode::internalize(STATE) {
     timer::StopWatch<timer::microseconds> timer(
-        state->vm()->metrics()->bytecode_internalizer_us);
+        state->metrics()->bytecode_internalizer_us);
 
     std::lock_guard<locks::spinlock_mutex> guard(lock());
 
@@ -262,7 +263,7 @@ namespace rubinius {
   }
 
   CompiledCode* CompiledCode::of_sender(STATE) {
-    if(CallFrame* frame = state->vm()->get_ruby_frame(1)) {
+    if(CallFrame* frame = state->get_ruby_frame(1)) {
       if(frame->compiled_code) {
         return frame->compiled_code;
       }
@@ -272,7 +273,7 @@ namespace rubinius {
   }
 
   CompiledCode* CompiledCode::current(STATE) {
-    return state->vm()->call_frame()->compiled_code;
+    return state->call_frame()->compiled_code;
   }
 
   Object* CompiledCode::jitted_p(STATE) {
@@ -320,7 +321,7 @@ namespace rubinius {
   }
 
   Object* CompiledCode::execute_script(STATE) {
-    state->thread_state()->clear();
+    state->unwind_state()->clear();
 
     Arguments args(state->symbol("script"), G(main));
 
@@ -334,8 +335,8 @@ namespace rubinius {
      *
      * TODO: Fix this by ensuring normal Exceptions can be raised
      */
-    if(state->vm()->thread_state()->raise_reason() == cException) {
-      Exception* exc = as<Exception>(state->vm()->thread_state()->current_exception());
+    if(state->unwind_state()->raise_reason() == cException) {
+      Exception* exc = as<Exception>(state->unwind_state()->current_exception());
       std::ostringstream msg;
 
       msg << "exception detected at toplevel: ";
@@ -371,15 +372,14 @@ namespace rubinius {
     MachineCode* mcode = code->machine_code();
     mcode->set_mark();
 
-    // TODO: pass State into GC!
-    VM* vm = VM::current();
-
-    if(vm->shared.profiler()->collecting_p()) {
-      if(mcode->sample_count > vm->shared.profiler()->sample_min()) {
-        vm->shared.profiler()->add_index(mcode->serial(), mcode->name(),
+    /* TODO: Machine
+    if(state->profiler()->collecting_p()) {
+      if(mcode->sample_count > state->profiler()->sample_min()) {
+        state->profiler()->add_index(mcode->serial(), mcode->name(),
             mcode->location(), mcode->sample_count, mcode->call_count);
       }
     }
+    */
 
     for(size_t i = 0; i < mcode->references_count(); i++) {
       if(size_t ip = mcode->references()[i]) {

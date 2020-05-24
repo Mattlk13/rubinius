@@ -5,6 +5,7 @@
 #include "memory.hpp"
 #include "object_utils.hpp"
 #include "on_stack.hpp"
+#include "primitives.hpp"
 
 #include "class/array.hpp"
 #include "class/class.hpp"
@@ -20,8 +21,11 @@
 #include "class/string.hpp"
 #include "class/symbol.hpp"
 #include "class/system.hpp"
+#include "class/unwind_state.hpp"
 
 #include "dtrace/dtrace.h"
+
+#include <sstream>
 
 namespace rubinius {
 
@@ -46,7 +50,6 @@ namespace rubinius {
 
   FFIData::FFIData(STATE, NativeFunction* func,  int count, FFIArgInfo* args, FFIArgInfo* ret)
     : closure(0)
-    , shared(&state->shared())
     , callable(0)
     , function(func)
     , args_info(args)
@@ -240,7 +243,7 @@ namespace rubinius {
       rubinius::bug("ffi_prep_cif failed");
     }
 
-    state->shared().om->add_code_resource(state, data);
+    state->memory()->add_code_resource(state, data);
     this->ffi_data(data);
   }
 
@@ -310,9 +313,9 @@ namespace rubinius {
       rubinius::bug("attempted to run native code from an incorrectly initialized Thread");
     }
 
-    State* state = env->state();
+    ThreadState* state = env->state();
 
-    state->vm()->managed_phase(state);
+    state->managed_phase();
 
     Array* args = Array::create(state, stub->arg_count);
     OnStack<1> os(state, args);
@@ -367,7 +370,7 @@ namespace rubinius {
 
         if(!result) {
           logger::error("Exception raised by callback, ignoring");
-          state->vm()->thread_state()->clear();
+          state->unwind_state()->clear();
           result = cNil;
         }
 
@@ -383,7 +386,7 @@ namespace rubinius {
           func->prep(state, orig->ffi_data()->arg_count,
               orig->ffi_data()->args_info, &orig->ffi_data()->ret_info);
           func->ffi_data()->ep = ptr;
-          Proc* prc = Proc::create(state, state->vm()->shared.globals.proc.get());
+          Proc* prc = Proc::create(state, state->memory()->globals.proc.get());
           prc->bound_method(state, func);
           args->set(state, i, prc);
         } else {
@@ -444,7 +447,7 @@ namespace rubinius {
     if(!obj) {
       // For now, log the error and return nil.
       logger::error("Exception raised by callback, ignoring");
-      state->vm()->thread_state()->clear();
+      state->unwind_state()->clear();
       obj = cNil;
     }
 
@@ -520,7 +523,7 @@ namespace rubinius {
       if(!value) {
         // For now, log the error and return nil.
         logger::error("Exception raised by callback, ignoring");
-        state->vm()->thread_state()->clear();
+        state->unwind_state()->clear();
         value = cNil;
       }
 
@@ -542,7 +545,7 @@ namespace rubinius {
       break;
     }
 
-    state->vm()->unmanaged_phase(state);
+    state->unmanaged_phase();
   }
 
 
@@ -660,7 +663,7 @@ namespace rubinius {
     }
 
     // Because we call back into ruby to do conversions.
-    memory::RootBuffer vrf(state->vm()->root_buffers(), args.arguments(), args.total());
+    memory::RootBuffer vrf(state->root_buffers(), args.arguments(), args.total());
 
     // Make sure we have this on the stack
     NativeFunction* self = this;
@@ -981,109 +984,109 @@ namespace rubinius {
       }
     }
 
-    NativeMethodEnvironment* env = state->vm()->native_method_environment;
+    NativeMethodEnvironment* env = state->native_method_environment;
     CallFrame* saved_frame = env->current_call_frame();
-    env->set_current_call_frame(state->vm()->call_frame());
+    env->set_current_call_frame(state->call_frame());
 
-    state->vm()->interrupt_with_signal();
-    state->vm()->unmanaged_phase(state);
+    state->interrupt_with_signal();
+    state->unmanaged_phase();
 
     switch(ffi_data_local->ret_info.type) {
     case RBX_FFI_TYPE_CHAR: {
       ffi_arg result = 0;
       ffi_call(cif, FFI_FN(ffi_data_local->ep), &result, values);
-      state->vm()->managed_phase(state);
-      ret = Fixnum::from((native_int)result);
+      state->managed_phase();
+      ret = Fixnum::from((intptr_t)result);
       break;
     }
     case RBX_FFI_TYPE_UCHAR: {
       ffi_arg result = 0;
       ffi_call(cif, FFI_FN(ffi_data_local->ep), &result, values);
-      state->vm()->managed_phase(state);
-      ret = Fixnum::from((native_int)result);
+      state->managed_phase();
+      ret = Fixnum::from((intptr_t)result);
       break;
     }
     case RBX_FFI_TYPE_BOOL: {
       ffi_arg result = 0;
       ffi_call(cif, FFI_FN(ffi_data_local->ep), &result, values);
-      state->vm()->managed_phase(state);
+      state->managed_phase();
       ret = RBOOL(result);
       break;
     }
     case RBX_FFI_TYPE_SHORT: {
       ffi_arg result = 0;
       ffi_call(cif, FFI_FN(ffi_data_local->ep), &result, values);
-      state->vm()->managed_phase(state);
-      ret = Fixnum::from((native_int)result);
+      state->managed_phase();
+      ret = Fixnum::from((intptr_t)result);
       break;
     }
     case RBX_FFI_TYPE_USHORT: {
       ffi_arg result = 0;
       ffi_call(cif, FFI_FN(ffi_data_local->ep), &result, values);
-      state->vm()->managed_phase(state);
-      ret = Fixnum::from((native_int)result);
+      state->managed_phase();
+      ret = Fixnum::from((intptr_t)result);
       break;
     }
     case RBX_FFI_TYPE_INT: {
       ffi_arg result = 0;
       ffi_call(cif, FFI_FN(ffi_data_local->ep), &result, values);
-      state->vm()->managed_phase(state);
-      ret = Integer::from(state, (native_int)result);
+      state->managed_phase();
+      ret = Integer::from(state, (intptr_t)result);
       break;
     }
     case RBX_FFI_TYPE_UINT: {
       ffi_arg result = 0;
       ffi_call(cif, FFI_FN(ffi_data_local->ep), &result, values);
-      state->vm()->managed_phase(state);
+      state->managed_phase();
       ret = Integer::from(state, (unsigned int)result);
       break;
     }
     case RBX_FFI_TYPE_LONG: {
       long result = 0;
       ffi_call(cif, FFI_FN(ffi_data_local->ep), &result, values);
-      state->vm()->managed_phase(state);
+      state->managed_phase();
       ret = Integer::from(state, result);
       break;
     }
     case RBX_FFI_TYPE_ULONG: {
       unsigned long result = 0;
       ffi_call(cif, FFI_FN(ffi_data_local->ep), &result, values);
-      state->vm()->managed_phase(state);
+      state->managed_phase();
       ret = Integer::from(state, result);
       break;
     }
     case RBX_FFI_TYPE_FLOAT: {
       float result = 0.0;
       ffi_call(cif, FFI_FN(ffi_data_local->ep), &result, values);
-      state->vm()->managed_phase(state);
+      state->managed_phase();
       ret = Float::create(state, (double)result);
       break;
     }
     case RBX_FFI_TYPE_DOUBLE: {
       double result = 0.0;
       ffi_call(cif, FFI_FN(ffi_data_local->ep), &result, values);
-      state->vm()->managed_phase(state);
+      state->managed_phase();
       ret = Float::create(state, result);
       break;
     }
     case RBX_FFI_TYPE_LONG_LONG: {
       long long result = 0;
       ffi_call(cif, FFI_FN(ffi_data_local->ep), &result, values);
-      state->vm()->managed_phase(state);
+      state->managed_phase();
       ret = Integer::from(state, result);
       break;
     }
     case RBX_FFI_TYPE_ULONG_LONG: {
       unsigned long long result = 0;
       ffi_call(cif, FFI_FN(ffi_data_local->ep), &result, values);
-      state->vm()->managed_phase(state);
+      state->managed_phase();
       ret = Integer::from(state, result);
       break;
     }
     case RBX_FFI_TYPE_PTR: {
       void* result = NULL;
       ffi_call(cif, FFI_FN(ffi_data_local->ep), &result, values);
-      state->vm()->managed_phase(state);
+      state->managed_phase();
       if(result == NULL) {
         ret = cNil;
       } else {
@@ -1095,10 +1098,10 @@ namespace rubinius {
       ffi_arg result = 0;
       ffi_call(cif, FFI_FN(ffi_data_local->ep), &result, values);
 
-      state->vm()->managed_phase(state);
+      state->managed_phase();
 
       Array* ary = Array::create(state, 1);
-      ary->set(state, 0, Integer::from(state, (native_int)result));
+      ary->set(state, 0, Integer::from(state, (intptr_t)result));
 
       ret = ffi_data()->ret_info.enum_obj->send(state, state->symbol("symbol"), ary);
       break;
@@ -1106,7 +1109,7 @@ namespace rubinius {
     case RBX_FFI_TYPE_CALLBACK: {
       void* result = NULL;
       ffi_call(cif, FFI_FN(ffi_data_local->ep), &result, values);
-      state->vm()->managed_phase(state);
+      state->managed_phase();
       if(result == NULL) {
         ret = cNil;
       } else {
@@ -1116,7 +1119,7 @@ namespace rubinius {
         func->prep(state, orig->ffi_data()->arg_count,
             orig->ffi_data()->args_info, &orig->ffi_data()->ret_info);
         func->ffi_data()->ep = result;
-        Proc* prc = Proc::create(state, state->vm()->shared.globals.proc.get());
+        Proc* prc = Proc::create(state, state->memory()->globals.proc.get());
         prc->bound_method(state, func);
         ret = (Object*)prc;
       }
@@ -1125,7 +1128,7 @@ namespace rubinius {
     case RBX_FFI_TYPE_STRING: {
       char* result = NULL;
       ffi_call(cif, FFI_FN(ffi_data_local->ep), &result, values);
-      state->vm()->managed_phase(state);
+      state->managed_phase();
       if(result == NULL) {
         ret = cNil;
       } else {
@@ -1140,7 +1143,7 @@ namespace rubinius {
       Object* p = cNil;
 
       ffi_call(cif, FFI_FN(ffi_data_local->ep), &result, values);
-      state->vm()->managed_phase(state);
+      state->managed_phase();
 
       if(result) {
         s = String::create(state, result);
@@ -1158,7 +1161,7 @@ namespace rubinius {
     case RBX_FFI_TYPE_VOID: {
       ffi_arg result = 0;
       ffi_call(cif, FFI_FN(ffi_data_local->ep), &result, values);
-      state->vm()->managed_phase(state);
+      state->managed_phase();
       ret = cNil;
       break;
     }

@@ -19,6 +19,8 @@
 #include "memory/collector.hpp"
 #include "memory/visitor.hpp"
 
+#include <sstream>
+
 namespace rubinius {
   class QueryCondition {
   public:
@@ -102,7 +104,7 @@ namespace rubinius {
     }
 
     virtual Object* immediate() {
-      native_int id = id_->to_native();
+      intptr_t id = id_->to_native();
 
       if(id & TAG_REF_MASK) {
         Object* obj = reinterpret_cast<Object*>(id);
@@ -175,7 +177,7 @@ namespace rubinius {
 
       obj->ivar_names(state, tmp_);
 
-      for(native_int i = 0; i < tmp_->size(); i++) {
+      for(intptr_t i = 0; i < tmp_->size(); i++) {
         if(Symbol* sym = try_as<Symbol>(tmp_->get(state, i))) {
           if(obj->get_ivar(state, sym)->equal_p(target_)) return true;
         }
@@ -183,7 +185,7 @@ namespace rubinius {
 
       // Check a tuples body.
       if(Tuple* tup = try_as<Tuple>(obj)) {
-        for(native_int i = 0; i < tup->num_fields(); i++) {
+        for(intptr_t i = 0; i < tup->num_fields(); i++) {
           if(tup->at(i)->equal_p(target_)) return true;
         }
       }
@@ -278,7 +280,7 @@ namespace rubinius {
       if(Symbol* sym = try_as<Symbol>(obj)) {
         // Check whether this is actually a valid symbol, not
         // some random non existing symbol.
-        if(!state->shared().symbols.lookup_string(state, sym)) {
+        if(!state->memory()->symbols.lookup_string(state, sym)) {
           delete condition;
           std::ostringstream msg;
           msg << "Invalid symbol 0x" << std::hex << reinterpret_cast<uintptr_t>(sym);

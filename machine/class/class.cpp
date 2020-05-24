@@ -1,6 +1,7 @@
 #include "configuration.hpp"
 #include "object_utils.hpp"
 #include "memory.hpp"
+#include "primitives.hpp"
 #include "on_stack.hpp"
 
 #include "class/array.hpp"
@@ -13,6 +14,9 @@
 #include "class/module.hpp"
 #include "class/packed_object.hpp"
 #include "class/symbol.hpp"
+
+#include <atomic>
+#include <sstream>
 
 namespace rubinius {
   void Class::bootstrap(STATE) {
@@ -44,7 +48,7 @@ namespace rubinius {
   }
 
   void Class::initialize_data(STATE, Class* klass) {
-    klass->class_data(state->shared().inc_class_count(state));
+    klass->class_data(state->memory()->inc_class_count());
     klass->packed_size(0);
 
     klass->packed_ivar_info(nil<LookupTable>());
@@ -165,7 +169,7 @@ namespace rubinius {
     }
 
 #ifdef RBX_ALLOC_TRACKING
-    if(unlikely(state->vm()->allocation_tracking())) {
+    if(unlikely(state->allocation_tracking())) {
       new_obj->setup_allocation_site(state);
     }
 #endif
@@ -240,7 +244,7 @@ namespace rubinius {
     LookupTable* lt = LookupTable::create(state);
 
     // If autopacking is enabled, figure out how many slots to use.
-    if(state->shared().config.memory_autopack) {
+    if(state->configuration()->memory_autopack) {
       Module* mod = self;
 
       int slot = 0;
@@ -255,7 +259,7 @@ namespace rubinius {
         }
 
         if(info && !info->nil_p()) {
-          for(native_int i = 0; i < info->size(); i++) {
+          for(intptr_t i = 0; i < info->size(); i++) {
             if(Symbol* sym = try_as<Symbol>(info->get(state, i))) {
               bool found = false;
               lt->fetch(state, sym, &found);
@@ -278,7 +282,7 @@ namespace rubinius {
     self->packed_size(sizeof(Object) + (slots * sizeof(Object*)));
     self->packed_ivar_info(state, lt);
 
-    atomic::memory_barrier();
+    std::atomic_thread_fence(std::memory_order_acq_rel);
     self->set_object_type(state, PackedObject::type);
 
     self->unlock(state);

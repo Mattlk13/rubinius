@@ -1,6 +1,6 @@
-#include "vm.hpp"
-#include "state.hpp"
+#include "thread_state.hpp"
 #include "object_utils.hpp"
+#include "spinlock.hpp"
 
 #include "class/array.hpp"
 #include "class/fixnum.hpp"
@@ -12,8 +12,6 @@
 
 #include "capi/capi.hpp"
 #include "capi/ruby.h"
-
-#include "util/spinlock.hpp"
 
 using namespace rubinius;
 using namespace rubinius::capi;
@@ -54,13 +52,13 @@ extern "C" {
     return rb_gv_get("$~");
   }
 
-  static int onig_lock = RBX_SPINLOCK_UNLOCKED;
+  static locks::spinlock_mutex onig_lock;
 
   void capi_reg_lock() {
-    rbx_spinlock_lock(&onig_lock);
+    onig_lock.lock();
   }
 
   void capi_reg_unlock() {
-    rbx_spinlock_unlock(&onig_lock);
+    onig_lock.unlock();
   }
 }

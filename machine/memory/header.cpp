@@ -1,5 +1,3 @@
-#include "util/atomic.hpp"
-
 #include "memory/header.hpp"
 
 #include "bug.hpp"
@@ -18,6 +16,8 @@
 #include "memory/collector.hpp"
 
 #include "diagnostics/memory.hpp"
+
+#include "capi/ruby.h"
 
 #include <assert.h>
 #include <chrono>
@@ -43,18 +43,12 @@ namespace rubinius {
     }
   }
 
-  void MemoryHeader::track_memory_handle(STATE) {
-    if(reference_p()) {
-      state->collector()->add_memory_handle(this);
-    }
-  }
-
   MemoryHeaderBits::MemoryHeaderBits(const MemoryHeader* header) {
     extended = header->extended_header_p();
     forwarded = header->forwarded_p();
     thread_id = header->thread_id();
     region = header->region();
-    referenced = header->referenced();
+    referenced = header->referenced_count();
     weakref = header->weakref_p();
     finalizer = header->finalizer_p();
     remembered = header->remembered_p();
@@ -82,12 +76,12 @@ namespace rubinius {
   }
 
   bool MemoryLock::lock_owned_p(STATE) {
-    return thread_id == state->vm()->thread_id() && locked_count > 0;
+    return thread_id == state->thread_id() && locked_count > 0;
   }
 
   bool MemoryLock::try_lock(STATE) {
     if(lock.try_lock()) {
-      thread_id = state->vm()->thread_id();
+      thread_id = state->thread_id();
       locked_count = 1;
       return true;
     } else {
@@ -96,7 +90,7 @@ namespace rubinius {
   }
 
   void MemoryLock::unlock(STATE) {
-    if(thread_id == state->vm()->thread_id()) {
+    if(thread_id == state->thread_id()) {
       if(locked_count > 0) {
         locked_count--;
 
@@ -114,10 +108,14 @@ namespace rubinius {
     }
   }
 
+  void ExtendedHeader::track_memory_header(STATE) {
+    state->collector()->add_memory_header(this);
+  }
+
   ExtendedHeader* ExtendedHeader::create_lock(STATE, const MemoryFlags h, unsigned int count) {
     ExtendedHeader* nh = create(h);
 
-    MemoryLock* lock = new MemoryLock(state->vm()->thread_id(), count);
+    MemoryLock* lock = new MemoryLock(state->thread_id(), count);
     nh->words[0].set_lock(lock);
 
     return nh;
@@ -128,7 +126,7 @@ namespace rubinius {
   {
     ExtendedHeader* nh = create(h, eh);
 
-    MemoryLock* lock = new MemoryLock(state->vm()->thread_id(), count);
+    MemoryLock* lock = new MemoryLock(state->thread_id(), count);
     nh->words[eh->size()].set_lock(lock);
 
     return nh;
@@ -139,7 +137,7 @@ namespace rubinius {
   {
     ExtendedHeader* nh = create_copy(h, eh);
 
-    MemoryLock* lock = new MemoryLock(state->vm()->thread_id(), count);
+    MemoryLock* lock = new MemoryLock(state->thread_id(), count);
 
     for(int i = 0; i < nh->size(); i++) {
       if(nh->words[i].lock_p()) {
@@ -159,7 +157,7 @@ namespace rubinius {
     static int modulo = sizeof(delay) / sizeof(int);
 
     while(!try_lock(state)) {
-      state->vm()->thread()->sleep(cTrue);
+      state->set_thread_sleep();
 
       uint64_t ns = delay[i++ % modulo];
 
@@ -167,18 +165,19 @@ namespace rubinius {
       std::this_thread::sleep_for(std::chrono::nanoseconds(ns));
     }
 
-    state->vm()->thread()->sleep(cFalse);
+    state->set_thread_run();
   }
 
   bool MemoryHeader::try_lock(STATE) {
     while(true) {
       MemoryFlags h = header.load(std::memory_order_acquire);
       MemoryFlags nh;
+      ExtendedHeader* hh = nullptr;
       ExtendedHeader* eh = nullptr;
 
-      if(thread_id() == state->vm()->thread_id()) {
+      if(thread_id() == state->thread_id()) {
         if(extended_header_p()) {
-          ExtendedHeader* hh = extended_header();
+          hh = extended_header();
           int locked_count = locked_count_field.get(hh->header);
 
           if(locked_count < max_locked_count()) {
@@ -196,7 +195,7 @@ namespace rubinius {
 
             if(lock->try_lock(state)) return true;
 
-            if(state->vm()->thread_nexus()->valid_thread_p(state, lock->thread_id)) {
+            if(state->valid_thread_p(lock->thread_id)) {
               return false;
             }
 
@@ -223,13 +222,19 @@ namespace rubinius {
         }
 
         if(header.compare_exchange_strong(h, nh, std::memory_order_release)) {
+          if(eh) eh->track_memory_header(state);
+
+          if(hh) hh->unsynchronized_set_zombie();
+
           return true;
         }
 
-        if(eh) eh->delete_header();
+        if(eh) eh->delete_zombie_header();
       } else {
+        ExtendedHeader* hh = nullptr;
+
         if(extended_header_p()) {
-          ExtendedHeader* hh = extended_header();
+          hh = extended_header();
 
           if(hh->lock_extended_p()) {
             MemoryLock* lock = hh->get_lock();
@@ -241,7 +246,7 @@ namespace rubinius {
 
             if(lock->try_lock(state)) return true;
 
-            if(state->vm()->thread_nexus()->valid_thread_p(state, lock->thread_id)) {
+            if(state->valid_thread_p(lock->thread_id)) {
               return false;
             }
 
@@ -253,9 +258,7 @@ namespace rubinius {
                 state, locked_count_field.set(hh->header, lock_extended()), hh, 1);
             nh = extended_flags(eh);
           } else {
-            if(state->vm()->thread_nexus()->valid_thread_p(
-                  state, thread_id_field.get(hh->header)))
-            {
+            if(state->valid_thread_p(thread_id_field.get(hh->header))) {
               return false;
             }
 
@@ -270,9 +273,7 @@ namespace rubinius {
 
             nh = extended_flags(eh);
           } else {
-            if(state->vm()->thread_nexus()->valid_thread_p(
-                  state, thread_id_field.get(h)))
-            {
+            if(state->valid_thread_p(thread_id_field.get(h))) {
               return false;
             }
 
@@ -283,10 +284,14 @@ namespace rubinius {
         }
 
         if(header.compare_exchange_strong(h, nh, std::memory_order_release)) {
+          if(eh) eh->track_memory_header(state);
+
+          if(hh) hh->unsynchronized_set_zombie();
+
           return true;
         }
 
-        if(eh) eh->delete_header();
+        if(eh) eh->delete_zombie_header();
       }
     }
   }
@@ -295,7 +300,7 @@ namespace rubinius {
     while(true) {
       MemoryFlags h = header.load(std::memory_order_acquire);
 
-      if(thread_id() == state->vm()->thread_id()) {
+      if(thread_id() == state->thread_id()) {
         if(extended_header_p()) {
           ExtendedHeader* hh = extended_header();
 
@@ -312,10 +317,14 @@ namespace rubinius {
               MemoryFlags nh = extended_flags(eh);
 
               if(header.compare_exchange_strong(h, nh, std::memory_order_release)) {
+                eh->track_memory_header(state);
+
+                hh->unsynchronized_set_zombie();
+
                 return;
               }
 
-              eh->delete_header();
+              eh->delete_zombie_header();
             } else {
               Exception::raise_runtime_error(state,
                   "unlocking owned, extended-header, non-locked object");
@@ -353,7 +362,7 @@ namespace rubinius {
   }
 
   void MemoryHeader::unset_lock(STATE) {
-    unset(locked_count_field);
+    unset(state, locked_count_field);
   }
 
   bool MemoryHeader::locked_p(STATE) {
@@ -365,25 +374,25 @@ namespace rubinius {
 
         if(!lock->locked_p(state)) return false;
 
-        if(state->vm()->thread_id() == lock->thread_id) return true;
+        if(state->thread_id() == lock->thread_id) return true;
 
-        if(state->vm()->thread_nexus()->valid_thread_p(state, lock->thread_id)) {
+        if(state->valid_thread_p(lock->thread_id)) {
           return true;
         }
       } else {
         if(locked_count_field.get(hh->header) > 0) {
-          if(state->vm()->thread_id() == thread_id()) return true;
+          if(state->thread_id() == thread_id()) return true;
 
-          if(state->vm()->thread_nexus()->valid_thread_p(state, thread_id())) {
+          if(state->valid_thread_p(thread_id())) {
             return true;
           }
         }
       }
     } else {
       if(locked_count_field.get(header.load(std::memory_order_acquire)) > 0) {
-        if(state->vm()->thread_id() == thread_id()) return true;
+        if(state->thread_id() == thread_id()) return true;
 
-        if(state->vm()->thread_nexus()->valid_thread_p(state, thread_id())) {
+        if(state->valid_thread_p(thread_id())) {
           return true;
         }
       }
@@ -398,23 +407,23 @@ namespace rubinius {
 
   void MemoryHeader::write_barrier(STATE, MemoryHeader* value) {
 #ifdef RBX_LOG_CONCURRENT_UPDATE
-    if(state->shared().config.machine_concurrent_update_log) {
-      if(thread_id() != state->vm()->thread_id()) {
+    if(state->configuration()->machine_concurrent_update_log) {
+      if(thread_id() != state->thread_id()) {
         TypeInfo* ti = state->memory()->type_info[type_id()];
 
         logger::warn("Therad id: %d updating an instance of %s created by Thread id: %d",
-            state->vm()->thread_id(), ti->type_name.c_str(), thread_id());
+            state->thread_id(), ti->type_name.c_str(), thread_id());
       }
     }
 #endif
 
 #ifdef RBX_RAISE_CONCURRENT_UPDATE
-    if(state->shared().config.machine_concurrent_update_raise) {
-      if(thread_id() != state->vm()->thread_id()) {
+    if(state->configuration()->machine_concurrent_update_raise) {
+      if(thread_id() != state->thread_id()) {
         TypeInfo* ti = state->memory()->type_info[type_id()];
 
         std::ostringstream msg;
-        msg << "Thread id: " << state->vm()->thread_id() <<
+        msg << "Thread id: " << state->thread_id() <<
           " updating an instance of " << ti->type_name <<
           " created by Thread id: " << thread_id();
 
@@ -422,6 +431,24 @@ namespace rubinius {
       }
     }
 #endif
+  }
+
+  MemoryHandle::~MemoryHandle() {
+    if(rarray_p()) {
+      delete reinterpret_cast<RArray*>(data());
+    } else if(rstring_p()) {
+      delete reinterpret_cast<RString*>(data());
+    } else if(rdata_p()) {
+      // RData objects have a finalizer defined
+    } else if (rfloat_p()) {
+      delete reinterpret_cast<RFloat*>(data());
+    } else if (rio_p()) {
+      // RIO objects have a finalizer defined
+    } else if (rfile_p()) {
+      delete reinterpret_cast<RFile*>(data());
+    }
+
+    _type_ = eReleased;
   }
 
   /* TODO: write_barrier
@@ -442,12 +469,12 @@ namespace rubinius {
     }
   */
 
-  size_t ObjectHeader::compute_size_in_bytes(VM* vm) const {
-    return vm->memory()->type_info[type_id()]->object_size(this);
+  size_t ObjectHeader::compute_size_in_bytes(STATE) const {
+    return state->memory()->type_info[type_id()]->object_size(this);
   }
 
-  size_t DataHeader::compute_size_in_bytes(VM* vm) const {
-    return vm->memory()->type_info[type_id()]->object_size(this);
+  size_t DataHeader::compute_size_in_bytes(STATE) const {
+    return state->memory()->type_info[type_id()]->object_size(this);
   }
 
   void ObjectHeader::initialize_copy(STATE, Object* other) {
@@ -455,7 +482,7 @@ namespace rubinius {
     ivars(state, other->ivars());
   }
 
-  void ObjectHeader::copy_body(VM* state, Object* other) {
+  void ObjectHeader::copy_body(STATE, Object* other) {
     void* src = other->__body__;
     void* dst = this->__body__;
 

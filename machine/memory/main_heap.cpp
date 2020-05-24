@@ -1,6 +1,7 @@
 #include "config.h"
-#include "vm.hpp"
-#include "state.hpp"
+#include "configuration.hpp"
+#include "machine.hpp"
+#include "thread_state.hpp"
 
 #include "memory.hpp"
 
@@ -11,12 +12,14 @@
 
 #include "diagnostics/collector.hpp"
 
+#include <mutex>
+
 namespace rubinius {
   namespace memory {
-    MainHeap::MainHeap(STATE, CodeManager& cm)
+    MainHeap::MainHeap(Configuration* configuration, CodeManager& cm)
       : Heap()
-      , first_region_(new Immix(state))
-      , third_region_(new LargeRegion(state))
+      , first_region_(new Immix())
+      , third_region_(new LargeRegion(configuration))
       , code_manager_(cm)
     {
     }
@@ -29,25 +32,25 @@ namespace rubinius {
       first_region_ = nullptr;
     }
 
-    Object* MainHeap::allocate(STATE, native_int bytes, object_type type) {
-      utilities::thread::SpinLock::LockGuard guard(state->memory()->allocation_lock());
+    Object* MainHeap::allocate(STATE, intptr_t bytes, object_type type) {
+      std::lock_guard<locks::spinlock_mutex> guard(state->memory()->allocation_lock());
 
       if(Object* obj = first_region()->allocate(state, bytes)) {
-        state->shared().memory_metrics()->first_region_objects++;
-        state->shared().memory_metrics()->first_region_bytes += bytes;
+        state->diagnostics()->memory_metrics()->first_region_objects++;
+        state->diagnostics()->memory_metrics()->first_region_bytes += bytes;
 
         MemoryHeader::initialize(
-            obj, state->vm()->thread_id(), eFirstRegion, type, false);
+            obj, state->thread_id(), eFirstRegion, type, false);
 
         return obj;
       }
 
       if(Object* obj = third_region()->allocate(state, bytes)) {
-        state->shared().memory_metrics()->large_objects++;
-        state->shared().memory_metrics()->large_bytes += bytes;
+        state->diagnostics()->memory_metrics()->large_objects++;
+        state->diagnostics()->memory_metrics()->large_bytes += bytes;
 
         MemoryHeader::initialize(
-            obj, state->vm()->thread_id(), eThirdRegion, type, false);
+            obj, state->thread_id(), eThirdRegion, type, false);
 
         return obj;
       }
@@ -71,15 +74,9 @@ namespace rubinius {
         i->set(fwd);
       }
 
-      {
-        std::lock_guard<std::mutex> guard(state->vm()->thread_nexus()->threads_mutex());
+      state->machine()->trace_objects(state, f);
 
-        for(ThreadList::iterator i = state->vm()->thread_nexus()->threads()->begin();
-            i != state->vm()->thread_nexus()->threads()->end();
-            ++i)
-        {
-          ManagedThread* thr = (*i);
-
+      state->threads()->each(state, [&](STATE, ThreadState* thr) {
           for(Roots::Iterator ri(thr->roots()); ri.more(); ri.advance()) {
             Object* fwd = ri->get();
             f(state, &fwd);
@@ -139,44 +136,19 @@ namespace rubinius {
             }
           }
 
-          if(VM* vm = thr->as_vm()) {
-            vm->gc_scan(state, f);
-          }
-        }
-      }
-
-      // TODO: GC: maybe move this into tracer
-      for(auto i = state->collector()->references().begin();
-          i != state->collector()->references().end();
-          ++i)
-      {
-        MemoryHeader* header = reinterpret_cast<MemoryHeader*>(*i);
-
-        if(header->referenced() > 0) {
-          if(header->object_p()) {
-            Object* obj = reinterpret_cast<Object*>(header);
-
-            // TODO: GC update the data structure
-            f(state, &obj);
-          } else if(header->data_p()) {
-            // DataHeader* data = reinterpret_cast<DataHeader*>(header);
-            // TODO: process data (not C-API Data) instances
-          }
-        }
-      }
+          thr->trace_objects(state, f);
+        });
     }
 
     void MainHeap::collect_finish(STATE) {
-      code_manager_.sweep();
+      code_manager_.sweep(state);
 
       first_region_->sweep(state);
       third_region_->sweep(state);
 
-      state->shared().symbols.sweep(state);
+      state->memory()->symbols.sweep(state);
 
-      state->memory()->rotate_mark();
-
-      diagnostics::CollectorMetrics* metrics = state->shared().collector_metrics();
+      diagnostics::CollectorMetrics* metrics = state->diagnostics()->collector_metrics();
       metrics->first_region_count++;
       metrics->large_count++;
     }

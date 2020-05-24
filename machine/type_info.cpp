@@ -5,14 +5,14 @@
 #include "class/symbol.hpp"
 #include "field_offset.hpp"
 
-#include <iostream>
+#include <sstream>
 #include <iomanip>
 
 namespace rubinius {
 
-  void TypeInfo::init(Memory* om) {
+  void TypeInfo::init(Memory* memory) {
     // Call the automatically generated function
-    auto_init(om);
+    auto_init(memory);
   }
 
   TypeInfo::TypeInfo(object_type type)
@@ -88,10 +88,10 @@ namespace rubinius {
     /* A wrapper because gdb can't do virtual dispatch. */
     void __show__(Object* obj) {
       /* TODO: GC
-      rubinius::State state(rubinius::VM::current());
+      rubinius::ThreadState state(rubinius::ThreadState::current());
 
       if(obj->reference_p()) {
-        ObjectPosition pos = rubinius::VM::current()->memory()->validate_object(obj);
+        ObjectPosition pos = rubinius::ThreadState::current()->memory()->validate_object(obj);
         if(pos == cUnknown) {
           std::cout << "<ERROR! Unknown object reference!>\n";
         } else if(pos == cInWrongYoungHalf) {
@@ -108,10 +108,10 @@ namespace rubinius {
     /* Similar to __show__ but only outputs #<SomeClass:0x2428999> */
     void __show_simple__(Object* obj) {
       /* TODO: GC
-      rubinius::State state(rubinius::VM::current());
+      rubinius::ThreadState state(rubinius::ThreadState::current());
 
       if(obj->reference_p()) {
-        ObjectPosition pos = rubinius::VM::current()->memory()->validate_object(obj);
+        ObjectPosition pos = rubinius::ThreadState::current()->memory()->validate_object(obj);
         if(pos == cUnknown) {
           std::cout << "<ERROR! Unknown object reference!>\n";
         } else if(pos == cInWrongYoungHalf) {

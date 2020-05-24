@@ -1,5 +1,5 @@
-#include "vm.hpp"
-#include "state.hpp"
+#include "c_api.hpp"
+#include "thread_state.hpp"
 #include "object_utils.hpp"
 
 #include "class/array.hpp"
@@ -56,8 +56,8 @@ namespace rubinius {
 
     if(rio_p()) {
       return reinterpret_cast<RIO*>(data());
-    } else if(unknown_type_p()) {
-      native_int fd = -1;
+    } else if(object_type_p()) {
+      intptr_t fd = -1;
       VALUE fileno = rb_funcall(jobj, id_descriptor, 0);
       Fixnum* tmp_fd = MemoryHandle::try_as<Fixnum>(fileno);
 
@@ -175,17 +175,17 @@ extern "C" {
     long ret;
 
     NativeMethodEnvironment* env = NativeMethodEnvironment::get();
-    State* state = env->state();
+    ThreadState* state = env->state();
     LEAVE_CAPI(state);
     {
       UnmanagedPhase unmanaged(state);
-      state->vm()->interrupt_with_signal();
-      state->vm()->thread()->sleep(state, cTrue);
+      state->interrupt_with_signal();
+      state->set_thread_sleep();
 
       ret = fread(ptr, 1, len, f);
 
-      state->vm()->thread()->sleep(state, cFalse);
-      state->vm()->clear_waiter();
+      state->set_thread_run();
+      state->clear_waiter();
     }
 
     ENTER_CAPI(env->state());
@@ -221,12 +221,12 @@ extern "C" {
     FD_SET((int_fd_t)fd, &fds);
 
     NativeMethodEnvironment* env = NativeMethodEnvironment::get();
-    State* state = env->state();
+    ThreadState* state = env->state();
     LEAVE_CAPI(state);
     {
       UnmanagedPhase unmanaged(state);
-      state->vm()->interrupt_with_signal();
-      state->vm()->thread()->sleep(state, cTrue);
+      state->interrupt_with_signal();
+      state->set_thread_sleep();
 
       int ready = 0;
       while(!ready) {
@@ -234,8 +234,8 @@ extern "C" {
         if(!retry) break;
       }
 
-      state->vm()->thread()->sleep(state, cFalse);
-      state->vm()->clear_waiter();
+      state->set_thread_run();
+      state->clear_waiter();
     }
 
     ENTER_CAPI(env->state());
@@ -272,12 +272,12 @@ extern "C" {
     FD_SET((int_fd_t)fd, &fds);
 
     NativeMethodEnvironment* env = NativeMethodEnvironment::get();
-    State* state = env->state();
+    ThreadState* state = env->state();
     LEAVE_CAPI(state);
     {
       UnmanagedPhase unmanaged(state);
-      state->vm()->interrupt_with_signal();
-      state->vm()->thread()->sleep(state, cTrue);
+      state->interrupt_with_signal();
+      state->set_thread_sleep();
 
       int ready = 0;
       while(!ready) {
@@ -285,8 +285,8 @@ extern "C" {
         if(!retry) break;
       }
 
-      state->vm()->thread()->sleep(state, cFalse);
-      state->vm()->clear_waiter();
+      state->set_thread_run();
+      state->clear_waiter();
     }
     ENTER_CAPI(env->state());
     return Qtrue;
@@ -303,20 +303,20 @@ extern "C" {
     FD_SET((int_fd_t)fd, &fds);
 
     NativeMethodEnvironment* env = NativeMethodEnvironment::get();
-    State* state = env->state();
+    ThreadState* state = env->state();
     LEAVE_CAPI(state);
     {
       UnmanagedPhase unmanaged(state);
-      state->vm()->interrupt_with_signal();
-      state->vm()->thread()->sleep(state, cTrue);
+      state->interrupt_with_signal();
+      state->set_thread_sleep();
 
       int ready = 0;
       while(!ready) {
         ready = select(fd+1, &fds, 0, 0, 0);
       }
 
-      state->vm()->thread()->sleep(state, cFalse);
-      state->vm()->clear_waiter();
+      state->set_thread_run();
+      state->clear_waiter();
     }
     ENTER_CAPI(env->state());
   }
@@ -332,20 +332,20 @@ extern "C" {
     FD_SET((int_fd_t)fd, &fds);
 
     NativeMethodEnvironment* env = NativeMethodEnvironment::get();
-    State* state = env->state();
+    ThreadState* state = env->state();
     LEAVE_CAPI(state);
     {
       UnmanagedPhase unmanaged(state);
-      state->vm()->interrupt_with_signal();
-      state->vm()->thread()->sleep(state, cTrue);
+      state->interrupt_with_signal();
+      state->set_thread_sleep();
 
       int ready = 0;
       while(!ready) {
         ready = select(fd+1, 0, &fds, 0, 0);
       }
 
-      state->vm()->thread()->sleep(state, cFalse);
-      state->vm()->clear_waiter();
+      state->set_thread_run();
+      state->clear_waiter();
     }
 
     ENTER_CAPI(env->state());
@@ -395,7 +395,7 @@ extern "C" {
 
   void rb_update_max_fd(int fd) {
     NativeMethodEnvironment* env = NativeMethodEnvironment::get();
-    State *state = env->state();
+    ThreadState *state = env->state();
     Object* fd_object = G(io)->get_const(env->state(), "FileDescriptor");
     VALUE fd_class = MemoryHandle::value(fd_object);
     VALUE descriptor = MemoryHandle::value(Fixnum::from(fd));
@@ -405,7 +405,7 @@ extern "C" {
 
   void rb_fd_fix_cloexec(int fd) {
     NativeMethodEnvironment* env = NativeMethodEnvironment::get();
-    State *state = env->state();
+    ThreadState *state = env->state();
     Object* fd_object = G(io)->get_const(env->state(), "FileDescriptor");
     VALUE fd_class = MemoryHandle::value(fd_object);
     VALUE descriptor = MemoryHandle::value(Fixnum::from(fd));

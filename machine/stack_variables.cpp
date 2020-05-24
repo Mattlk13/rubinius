@@ -33,12 +33,12 @@ namespace rubinius {
     scope->method(state, call_frame->compiled_code);
     scope->heap_locals(state, nil<Tuple>());
     scope->last_match(state, last_match_);
-    scope->fiber(state, state->vm()->thread()->current_fiber());
+    scope->fiber(state, state->thread()->current_fiber());
 
     scope->number_of_locals(mcode->number_of_locals);
     scope->isolated(0);
     scope->flags(call_frame->flags);
-    scope->_lock_.init();
+    new(&scope->_lock_) locks::spinlock_mutex;
 
     if(!full) {
       scope->isolated(1);

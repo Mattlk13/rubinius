@@ -4,8 +4,7 @@
 #include <sys/time.h>
 
 #include "config.h"
-#include "vm.hpp"
-#include "state.hpp"
+#include "thread_state.hpp"
 #include "memory.hpp"
 #include "thread_phase.hpp"
 
@@ -55,30 +54,22 @@ namespace rubinius {
     Exception::raise_memory_error(state);
   }
 
-  Object* object_watch = 0;
-
   /* Memory methods */
-  Memory::Memory(STATE)
-    : collector_(new memory::Collector(state))
-    , code_manager_(&state->shared())
-    , main_heap_(new memory::MainHeap(state, code_manager_))
+  Memory::Memory(STATE, Configuration* configuration)
+    : code_manager_()
+    , main_heap_(new memory::MainHeap(configuration, code_manager_))
     , cycle_(0)
     , mark_(0x1)
     , visit_mark_(0x1)
-    , shared_(state->shared())
-    , vm_(state->vm())
+    , class_count_(0)
+    , global_serial_(0)
+    , codedb_lock_()
+    , type_info_lock_()
+    , code_resource_lock_()
     , last_object_id(1)
     , last_snapshot_id(0)
-    , large_object_threshold(state->shared().config.memory_large_object)
+    , large_object_threshold(configuration->memory_large_object)
   {
-    // TODO Not sure where this code should be...
-#ifdef ENABLE_OBJECT_WATCH
-    if(char* num = getenv("RBX_WATCH")) {
-      object_watch = reinterpret_cast<Object*>(strtol(num, NULL, 10));
-      std::cout << "Watching for " << object_watch << "\n";
-    }
-#endif
-
     for(size_t i = 0; i < LastObjectType; i++) {
       type_info[i] = NULL;
     }
@@ -93,6 +84,13 @@ namespace rubinius {
 
     delete main_heap_;
     main_heap_ = nullptr;
+  }
+
+  void Memory::after_fork_child(STATE) {
+    new(&type_info_lock_) locks::spinlock_mutex;
+    new(&code_resource_lock_) locks::spinlock_mutex;
+
+    new(&codedb_lock_) std::recursive_mutex;
   }
 
   /* TODO: GC
@@ -125,36 +123,38 @@ namespace rubinius {
 
   /* Garbage collection */
 
-  void Memory::add_type_info(TypeInfo* ti) {
-    utilities::thread::SpinLock::LockGuard guard(shared_.type_info_lock());
-
+  void Memory::add_type_info(Memory* memory, TypeInfo* ti) {
     if(TypeInfo* current = type_info[ti->type]) {
       delete current;
     }
     type_info[ti->type] = ti;
   }
 
-  Object* Memory::new_object(STATE, native_int bytes, object_type type) {
-    return state->vm()->allocate_object(state, bytes, type);
+  Object* Memory::new_object(STATE, intptr_t bytes, object_type type) {
+    return state->allocate_object(state, bytes, type);
   }
 
-  Object* Memory::new_object_pinned(STATE, native_int bytes, object_type type) {
-    utilities::thread::SpinLock::LockGuard guard(allocation_lock_);
+  Object* Memory::new_object_pinned(STATE, intptr_t bytes, object_type type) {
+    std::lock_guard<locks::spinlock_mutex> guard(allocation_lock_);
 
     Object* obj = nullptr;
 
     if(likely(obj = main_heap_->third_region()->allocate(state, bytes))) {
-      shared().memory_metrics()->large_objects++;
-      shared().memory_metrics()->large_bytes += bytes;
+      state->diagnostics()->memory_metrics()->large_objects++;
+      state->diagnostics()->memory_metrics()->large_bytes += bytes;
 
       MemoryHeader::initialize(
-          obj, state->vm()->thread_id(), eThirdRegion, type, false);
+          obj, state->thread_id(), eThirdRegion, type, false);
 
       return obj;
     }
 
     Memory::memory_error(state);
     return nullptr;
+  }
+
+  TypeInfo* Memory::find_type(int type) {
+    return type_info[type];
   }
 
   TypeInfo* Memory::find_type_info(Object* obj) {
@@ -176,42 +176,42 @@ namespace rubinius {
   */
 
   void Memory::add_code_resource(STATE, memory::CodeResource* cr) {
-    utilities::thread::SpinLock::LockGuard guard(shared_.code_resource_lock());
+    std::lock_guard<locks::spinlock_mutex> guard(code_resource_lock());
 
-    state->shared().memory_metrics()->code_bytes += cr->size();
+    state->diagnostics()->memory_metrics()->code_bytes += cr->size();
 
     bool collect_flag = false;
     code_manager_.add_resource(cr, &collect_flag);
 
     if(collect_flag) {
-      collector()->collect_requested(state,
+      state->collector()->collect_requested(state,
           "collector: code resource triggered collection request");
     }
   }
 }
 
 void* XMALLOC(size_t bytes) {
-  if(rubinius::VM* vm = rubinius::VM::current()) {
-    vm->shared.memory_metrics()->malloc++;
-    vm->shared.memory_metrics()->allocated_bytes += bytes;
+  if(rubinius::ThreadState* state = rubinius::ThreadState::current()) {
+    state->diagnostics()->memory_metrics()->malloc++;
+    state->diagnostics()->memory_metrics()->allocated_bytes += bytes;
   }
 
   return malloc(bytes);
 }
 
 void XFREE(void* ptr) {
-  if(rubinius::VM* vm = rubinius::VM::current()) {
-    vm->shared.memory_metrics()->freed++;
+  if(rubinius::ThreadState* state = rubinius::ThreadState::current()) {
+    state->diagnostics()->memory_metrics()->freed++;
   }
 
   free(ptr);
 }
 
 void* XREALLOC(void* ptr, size_t bytes) {
-  if(rubinius::VM* vm = rubinius::VM::current()) {
-    vm->shared.memory_metrics()->realloc++;
-    vm->shared.memory_metrics()->freed++;
-    vm->shared.memory_metrics()->allocated_bytes += bytes;
+  if(rubinius::ThreadState* state = rubinius::ThreadState::current()) {
+    state->diagnostics()->memory_metrics()->realloc++;
+    state->diagnostics()->memory_metrics()->freed++;
+    state->diagnostics()->memory_metrics()->allocated_bytes += bytes;
   }
 
   return realloc(ptr, bytes);
@@ -220,9 +220,9 @@ void* XREALLOC(void* ptr, size_t bytes) {
 void* XCALLOC(size_t items, size_t bytes_per) {
   size_t bytes = bytes_per * items;
 
-  if(rubinius::VM* vm = rubinius::VM::current()) {
-    vm->shared.memory_metrics()->calloc++;
-    vm->shared.memory_metrics()->allocated_bytes += bytes;
+  if(rubinius::ThreadState* state = rubinius::ThreadState::current()) {
+    state->diagnostics()->memory_metrics()->calloc++;
+    state->diagnostics()->memory_metrics()->allocated_bytes += bytes;
   }
 
   return calloc(items, bytes_per);

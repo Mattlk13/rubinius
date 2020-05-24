@@ -20,7 +20,7 @@ namespace rubinius {
       return reinterpret_cast<Symbol*>(APPLY_SYMBOL_TAG(index));
     }
 
-    native_int index() const;
+    intptr_t index() const;
 
     // Rubinius.primitive+ :symbol_s_eqq
     static Object* is_symbol(STATE, Object* obj) {
@@ -41,7 +41,6 @@ namespace rubinius {
 
     // Return a representation to be used when debugging
     std::string debug_str(STATE);
-    std::string debug_str(SharedState& shared);
 
     // Rubinius.primitive :symbol_all_symbols
     static Array* all_symbols(STATE);

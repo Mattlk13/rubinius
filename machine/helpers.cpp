@@ -5,8 +5,7 @@
 #include "lookup_data.hpp"
 #include "object_utils.hpp"
 #include "on_stack.hpp"
-#include "state.hpp"
-#include "vm.hpp"
+#include "thread_state.hpp"
 
 #include "class/object.hpp"
 #include "class/autoload.hpp"
@@ -23,6 +22,8 @@
 #include "class/method_table.hpp"
 #include "class/location.hpp"
 #include "class/exception.hpp"
+
+#include <sstream>
 
 namespace rubinius {
   namespace Helpers {
@@ -42,7 +43,7 @@ namespace rubinius {
         mod = mod->superclass();
       }
 
-      state->vm()->set_constant_missing_reason(*reason);
+      state->set_constant_missing_reason(*reason);
       return cNil;
     }
 
@@ -52,7 +53,7 @@ namespace rubinius {
 
       *reason = vNonExistent;
 
-      CallFrame* frame = state->vm()->get_ruby_frame();
+      CallFrame* frame = state->get_ruby_frame();
 
       // Ok, this has to be explained or it will be considered black magic.
       // The scope chain always ends with an entry at the top that contains
@@ -152,7 +153,7 @@ namespace rubinius {
     Object* const_missing(STATE, Symbol* sym) {
       Module* under;
 
-      CallFrame* call_frame = state->vm()->get_ruby_frame();
+      CallFrame* call_frame = state->get_ruby_frame();
 
       LexicalScope* scope = call_frame->lexical_scope();
       if(scope->nil_p()) {
@@ -169,7 +170,7 @@ namespace rubinius {
     Class* open_class(STATE, Object* super, Symbol* name, bool* created) {
       Module* under;
 
-      CallFrame* call_frame = state->vm()->get_ruby_frame();
+      CallFrame* call_frame = state->get_ruby_frame();
 
       if(call_frame->lexical_scope()->nil_p()) {
         under = G(object);
@@ -239,7 +240,7 @@ namespace rubinius {
     Module* open_module(STATE, Symbol* name) {
       Module* under = G(object);
 
-      CallFrame* call_frame = state->vm()->get_ruby_frame();
+      CallFrame* call_frame = state->get_ruby_frame();
 
       if(!call_frame->lexical_scope()->nil_p()) {
         under = call_frame->lexical_scope()->module();
@@ -277,60 +278,6 @@ namespace rubinius {
       under->set_const(state, name, module);
 
       return module;
-    }
-
-    bool yield_debugger(STATE, Object* bp) {
-      Thread* cur = Thread::current(state);
-      Thread* debugger = cur->debugger_thread();
-
-      // Not for us, bail.
-      if(debugger->nil_p()) {
-        return true;
-      }
-
-      Channel* debugger_chan = debugger->control_channel();
-
-      // Debugger not initialized? bail.
-      if(debugger_chan->nil_p()) {
-        std::cout << "no debugger channel\n";
-        return true;
-      }
-
-      // If we're hitting here, clear any chance that step would be used
-      // without being explicitly requested.
-      state->vm()->clear_thread_step();
-
-      Channel* my_control = cur->control_channel();
-
-      // Lazily create our own control channel.
-      if(my_control->nil_p()) {
-        my_control = Channel::create(state);
-        cur->control_channel(state, my_control);
-      }
-
-      Array* locs = Location::debugging_call_stack(state);
-
-      OnStack<1> os(state, my_control);
-
-      debugger_chan->send(state, Tuple::from(state, 4, bp, cur, my_control, locs));
-
-      // Block until the debugger wakes us back up.
-      Object* ret = my_control->receive(state);
-
-      // Do not access any locals other than ret beyond here unless you add OnStack<>
-      // to them! The GC has probably run and moved things.
-
-      // if ret is null, then receive was interrupted and there is an exception
-      // to propagate.
-      if(!ret) return false;
-
-      // Process a few commands...
-      if(ret == state->symbol("step")) {
-        state->vm()->set_thread_step();
-      }
-
-      // All done!
-      return true;
     }
   }
 }

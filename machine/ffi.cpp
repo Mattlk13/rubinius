@@ -12,8 +12,7 @@
 #include <dlfcn.h>
 #endif
 
-#include "vm.hpp"
-#include "state.hpp"
+#include "thread_state.hpp"
 #include "memory.hpp"
 
 #include "class/array.hpp"
@@ -30,7 +29,7 @@
 
 namespace rubinius {
 
-  void VM::init_ffi(STATE) {
+  void ThreadState::init_ffi(STATE) {
     GO(ffi).set(state->memory()->new_module<Module>(state, G(rubinius), "FFI"));
     Module* mod = G(ffi);
     mod->set_const(state, "TYPE_CHAR",       Fixnum::from(RBX_FFI_TYPE_CHAR));

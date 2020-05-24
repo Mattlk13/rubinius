@@ -588,7 +588,6 @@ namespace rubinius {
       "r_copy", 136, 3, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
       rubinius::interpreter::r_copy
     };
-
     const InstructionData constexpr data_n_iadd = {
       "n_iadd", 137, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
       rubinius::interpreter::n_iadd
@@ -781,15 +780,15 @@ namespace rubinius {
       "r_load_1", 184, 2, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
       rubinius::interpreter::r_load_1
     };
-    const InstructionData constexpr data_r_load_nil {
+    const InstructionData constexpr data_r_load_nil = {
       "r_load_nil", 185, 3, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
       rubinius::interpreter::r_load_nil
     };
-    const InstructionData constexpr data_r_load_false {
+    const InstructionData constexpr data_r_load_false = {
       "r_load_false", 186, 2, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
       rubinius::interpreter::r_load_false
     };
-    const InstructionData constexpr data_r_load_true {
+    const InstructionData constexpr data_r_load_true = {
       "r_load_true", 187, 2, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
       rubinius::interpreter::r_load_true
     };
@@ -808,6 +807,378 @@ namespace rubinius {
     const InstructionData constexpr data_push_tagged_nil = {
       "push_tagged_nil", 191, 2, 0, 0, 0, 0, 1, (0 * 0), (0 * 0), (0 * 0),
       rubinius::interpreter::push_tagged_nil
+    };
+    const InstructionData constexpr data_r_load_bool = {
+      "r_load_bool", 192, 3, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::r_load_bool
+    };
+    const InstructionData constexpr data_r_load_m_binops = {
+      "r_load_m_binops", 193, 3, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::r_load_m_binops
+    };
+    const InstructionData constexpr data_r_load_f_binops = {
+      "r_load_f_binops", 194, 3, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::r_load_f_binops
+    };
+    const InstructionData constexpr data_r_ret = {
+      "r_ret", 195, 2, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::r_ret
+    };
+    const InstructionData constexpr data_n_imod = {
+      "data_n_imod", 196, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_imod
+    };
+    const InstructionData constexpr data_n_ineg = {
+      "data_n_ineg", 197, 3, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_ineg
+    };
+    const InstructionData constexpr data_n_inot = {
+      "data_n_inot", 198, 3, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_inot
+    };
+    const InstructionData constexpr data_n_iand = {
+      "data_n_iand", 199, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_iand
+    };
+    const InstructionData constexpr data_n_ior = {
+      "data_n_ior", 200, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_ior
+    };
+    const InstructionData constexpr data_n_ixor = {
+      "data_n_ixor", 201, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_ixor
+    };
+    const InstructionData constexpr data_n_ishl = {
+      "data_n_ishl", 202, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_ishl
+    };
+    const InstructionData constexpr data_n_ishr = {
+      "data_n_ishr", 203, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_ishr
+    };
+    const InstructionData constexpr data_n_imod_o = {
+      "data_n_imod_o", 204, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_imod_o
+    };
+    const InstructionData constexpr data_n_ineg_o = {
+      "data_n_ineg_o", 205, 3, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_ineg_o
+    };
+    const InstructionData constexpr data_n_ishl_o = {
+      "data_n_ishl_o", 206, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_ishl_o
+    };
+    const InstructionData constexpr data_n_ishr_o = {
+      "data_n_ishr_o", 207, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_ishr_o
+    };
+    const InstructionData constexpr data_n_promote = {
+      "data_n_promote", 208, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_promote
+    };
+    const InstructionData constexpr data_n_eadd = {
+      "n_eadd", 209, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_eadd
+    };
+    const InstructionData constexpr data_n_esub = {
+      "n_esub", 210, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_esub
+    };
+    const InstructionData constexpr data_n_emul = {
+      "n_emul", 211, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_emul
+    };
+    const InstructionData constexpr data_n_ediv = {
+      "n_ediv", 212, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_ediv
+    };
+    const InstructionData constexpr data_n_emod = {
+      "data_n_emod", 213, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_emod
+    };
+    const InstructionData constexpr data_n_eneg = {
+      "data_n_eneg", 214, 3, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_eneg
+    };
+    const InstructionData constexpr data_n_enot = {
+      "data_n_enot", 215, 3, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_enot
+    };
+    const InstructionData constexpr data_n_eand = {
+      "data_n_eand", 216, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_eand
+    };
+    const InstructionData constexpr data_n_eor = {
+      "data_n_eor", 217, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_eor
+    };
+    const InstructionData constexpr data_n_exor = {
+      "data_n_exor", 218, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_exor
+    };
+    const InstructionData constexpr data_n_eshl = {
+      "data_n_eshl", 219, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_eshl
+    };
+    const InstructionData constexpr data_n_eshr = {
+      "data_n_eshr", 220, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_eshr
+    };
+    const InstructionData constexpr data_n_epopcnt = {
+      "n_epopcnt", 221, 3, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_epopcnt
+    };
+    const InstructionData constexpr data_n_eeq = {
+      "n_eeq", 222, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_eeq
+    };
+    const InstructionData constexpr data_n_ene = {
+      "n_ene", 223, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_ene
+    };
+    const InstructionData constexpr data_n_elt = {
+      "n_elt", 224, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_elt
+    };
+    const InstructionData constexpr data_n_ele = {
+      "n_ele", 225, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_ele
+    };
+    const InstructionData constexpr data_n_egt = {
+      "n_egt", 226, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_egt
+    };
+    const InstructionData constexpr data_n_ege = {
+      "n_ege", 227, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_ege
+    };
+    const InstructionData constexpr data_n_dadd = {
+      "n_dadd", 228, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_dadd
+    };
+    const InstructionData constexpr data_n_dsub = {
+      "n_dsub", 229, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_dsub
+    };
+    const InstructionData constexpr data_n_dmul = {
+      "n_dmul", 230, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_dmul
+    };
+    const InstructionData constexpr data_n_ddiv = {
+      "n_ddiv", 231, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_ddiv
+    };
+    const InstructionData constexpr data_n_dmod = {
+      "data_n_dmod", 232, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_dmod
+    };
+    const InstructionData constexpr data_n_dneg = {
+      "data_n_dneg", 233, 3, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_dneg
+    };
+    const InstructionData constexpr data_n_deq = {
+      "n_deq", 234, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_deq
+    };
+    const InstructionData constexpr data_n_dne = {
+      "n_dne", 235, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_dne
+    };
+    const InstructionData constexpr data_n_dlt = {
+      "n_dlt", 236, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_dlt
+    };
+    const InstructionData constexpr data_n_dle = {
+      "n_dle", 237, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_dle
+    };
+    const InstructionData constexpr data_n_dgt = {
+      "n_dgt", 238, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_dgt
+    };
+    const InstructionData constexpr data_n_dge = {
+      "n_dge", 239, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_dge
+    };
+    const InstructionData constexpr data_r_load_float = {
+      "r_load_float", 240, 3, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::r_load_float
+    };
+    const InstructionData constexpr data_r_store_float = {
+      "r_store_float", 241, 3, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::r_store_float
+    };
+    const InstructionData constexpr data_b_if_eint = {
+      "b_if_eint", 242, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::b_if_eint
+    };
+    const InstructionData constexpr data_b_if_float = {
+      "b_if_float", 243, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::b_if_float
+    };
+    const InstructionData constexpr data_r_load_2 = {
+      "r_load_2", 244, 2, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::r_load_2
+    };
+    const InstructionData constexpr data_r_load_neg1 = {
+      "r_load_neg1", 245, 2, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::r_load_neg1
+    };
+    const InstructionData constexpr data_n_iinc = {
+      "n_iinc", 246, 3, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_iinc
+    };
+    const InstructionData constexpr data_n_idec = {
+      "n_idec", 247, 3, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_idec
+    };
+    const InstructionData constexpr data_n_isize = {
+      "n_isize", 248, 3, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_isize
+    };
+    const InstructionData constexpr data_n_esize = {
+      "n_esize", 249, 3, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_esize
+    };
+    const InstructionData constexpr data_n_ibits = {
+      "n_ibits", 250, 3, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_ibits
+    };
+    const InstructionData constexpr data_n_ebits = {
+      "n_ebits", 251, 3, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_ebits
+    };
+    const InstructionData constexpr data_r_load_self = {
+      "r_load_self", 252, 2, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::r_load_self
+    };
+    const InstructionData constexpr data_n_istr = {
+      "n_istr", 253, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_istr
+    };
+    const InstructionData constexpr data_n_iflt = {
+      "n_iflt", 254, 3, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_iflt
+    };
+    const InstructionData constexpr data_n_icmp = {
+      "n_icmp", 255, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_icmp
+    };
+    const InstructionData constexpr data_n_idivmod = {
+      "n_idivmod", 256, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_idivmod
+    };
+    const InstructionData constexpr data_n_ipow_o = {
+      "n_ipow_o", 257, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_ipow_o
+    };
+    const InstructionData constexpr data_n_estr = {
+      "n_estr", 258, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_estr
+    };
+    const InstructionData constexpr data_n_eflt = {
+      "n_eflt", 259, 3, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_eflt
+    };
+    const InstructionData constexpr data_n_ecmp = {
+      "n_ecmp", 260, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_ecmp
+    };
+    const InstructionData constexpr data_n_edivmod = {
+      "n_edivmod", 261, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_edivmod
+    };
+    const InstructionData constexpr data_n_epow = {
+      "n_epow", 262, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_epow
+    };
+    const InstructionData constexpr data_n_dstr = {
+      "n_dstr", 263, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_dstr
+    };
+    const InstructionData constexpr data_n_dcmp = {
+      "n_dcmp", 264, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_dcmp
+    };
+    const InstructionData constexpr data_n_ddivmod = {
+      "n_ddivmod", 265, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_ddivmod
+    };
+    const InstructionData constexpr data_n_dpow = {
+      "n_dpow", 266, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_dpow
+    };
+    const InstructionData constexpr data_n_demote = {
+      "n_demote", 267, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_demote
+    };
+    const InstructionData constexpr data_n_dinf = {
+      "n_dinf", 268, 3, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_dinf
+    };
+    const InstructionData constexpr data_n_dnan = {
+      "n_dnan", 269, 3, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_dnan
+    };
+    const InstructionData constexpr data_n_dclass = {
+      "n_dclass", 270, 3, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_dclass
+    };
+    const InstructionData constexpr data_n_dsign = {
+      "n_dsign", 271, 3, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::n_dsign
+    };
+    const InstructionData constexpr data_r_load_ref_addr = {
+      "r_load_ref_addr", 272, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::r_load_ref_addr
+    };
+    const InstructionData constexpr data_r_load_byte_addr = {
+      "r_load_byte_addr", 273, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::r_load_byte_addr
+    };
+    const InstructionData constexpr data_r_load_ref = {
+      "r_load_ref", 274, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::r_load_ref
+    };
+    const InstructionData constexpr data_r_store_ref = {
+      "r_store_ref", 275, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::r_store_ref
+    };
+    const InstructionData constexpr data_r_load_byte = {
+      "r_load_byte", 276, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::r_load_byte
+    };
+    const InstructionData constexpr data_r_store_byte = {
+      "r_store_byte", 277, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::r_store_byte
+    };
+    const InstructionData constexpr data_r_load_handle = {
+      "r_load_handle", 278, 3, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::r_load_handle
+    };
+    const InstructionData constexpr data_r_store_handle = {
+      "r_store_handle", 279, 3, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::r_store_handle
+    };
+    const InstructionData constexpr data_r_load_ivar = {
+      "r_load_ivar", 280, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::r_load_ivar
+    };
+    const InstructionData constexpr data_r_store_ivar = {
+      "r_store_ivar", 281, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::r_store_ivar
+    };
+    const InstructionData constexpr data_r_load_index = {
+      "r_load_index", 282, 4, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::r_load_index
+    };
+    const InstructionData constexpr data_r_refcnt_inc = {
+      "r_refcnt_inc", 283, 2, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::r_refcnt_inc
+    };
+    const InstructionData constexpr data_r_refcnt_dec = {
+      "r_refcnt_dec", 284, 2, 0, 0, 0, 0, 0, (0 * 0), (0 * 0), (0 * 0),
+      rubinius::interpreter::r_refcnt_dec
     };
   }
 

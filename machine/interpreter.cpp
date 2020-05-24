@@ -22,7 +22,6 @@ namespace rubinius {
 
     opcode* opcodes = machine_code->opcodes;
     size_t total = machine_code->total;
-    size_t stack_size = machine_code->stack_size;
 
     size_t rcount = 0;
     size_t rindex = 0;
@@ -87,27 +86,8 @@ namespace rubinius {
       opcode op = as<Fixnum>(ops->at(ip))->to_native();
       width = Instructions::instruction_data(op).width;
 
-      // Fix register offsets
       switch(op) {
-      case instructions::data_b_if_serial.id:
-        opcodes[ip + 2] += stack_size;
-        break;
-      case instructions::data_b_if.id:
-      case instructions::data_r_load_local.id:
-      case instructions::data_r_store_local.id:
-      case instructions::data_r_load_local_depth.id:
-      case instructions::data_r_store_local_depth.id:
-      case instructions::data_r_load_stack.id:
-      case instructions::data_r_store_stack.id:
-      case instructions::data_r_load_0.id:
-      case instructions::data_r_load_1.id:
-      case instructions::data_r_load_false.id:
-      case instructions::data_r_load_true.id:
-      case instructions::data_m_log.id:
-        opcodes[ip + 1] += stack_size;
-        break;
       case instructions::data_r_load_nil.id:
-        opcodes[ip + 1] += stack_size;
         opcodes[ip + 2] = reinterpret_cast<opcode>(APPLY_NIL_TAG(machine_code->nil_id(), ip));
         break;
       case instructions::data_r_load_literal.id: {
@@ -115,48 +95,8 @@ namespace rubinius {
 
         Object* value = as<Object>(lits->at(opcodes[ip + 2]));
         opcodes[ip + 2] = reinterpret_cast<opcode>(value);
-
-        opcodes[ip + 1] += stack_size;
         break;
       }
-      case instructions::data_b_if_int.id:
-      case instructions::data_r_load_int.id:
-      case instructions::data_r_store_int.id:
-      case instructions::data_r_copy.id:
-      case instructions::data_n_ipopcnt.id:
-      case instructions::data_a_instance.id:
-      case instructions::data_a_kind.id:
-      case instructions::data_a_method.id:
-      case instructions::data_a_receiver_method.id:
-      case instructions::data_a_type.id:
-      case instructions::data_a_function.id:
-      case instructions::data_a_equal.id:
-      case instructions::data_a_not_equal.id:
-      case instructions::data_a_less.id:
-      case instructions::data_a_less_equal.id:
-      case instructions::data_a_greater.id:
-      case instructions::data_a_greater_equal.id:
-        opcodes[ip + 1] += stack_size;
-        opcodes[ip + 2] += stack_size;
-        break;
-      case instructions::data_n_iadd.id:
-      case instructions::data_n_isub.id:
-      case instructions::data_n_imul.id:
-      case instructions::data_n_idiv.id:
-      case instructions::data_n_iadd_o.id:
-      case instructions::data_n_isub_o.id:
-      case instructions::data_n_imul_o.id:
-      case instructions::data_n_idiv_o.id:
-      case instructions::data_n_ieq.id:
-      case instructions::data_n_ine.id:
-      case instructions::data_n_ilt.id:
-      case instructions::data_n_ile.id:
-      case instructions::data_n_igt.id:
-      case instructions::data_n_ige.id:
-        opcodes[ip + 1] += stack_size;
-        opcodes[ip + 2] += stack_size;
-        opcodes[ip + 3] += stack_size;
-        break;
       };
 
       switch(op) {
@@ -192,6 +132,13 @@ namespace rubinius {
       case instructions::data_set_const_at.id: {
         Symbol* sym = as<Symbol>(lits->at(opcodes[ip + 1]));
         opcodes[ip + 1] = reinterpret_cast<opcode>(sym);
+        break;
+      }
+      case instructions::data_r_load_index.id:
+      case instructions::data_r_store_ivar.id:
+      case instructions::data_r_load_ivar.id: {
+        Symbol* sym = as<Symbol>(lits->at(opcodes[ip + 3]));
+        opcodes[ip + 3] = reinterpret_cast<opcode>(sym);
         break;
       }
       case instructions::data_invoke_primitive.id: {
@@ -300,7 +247,7 @@ namespace rubinius {
     Exception* exception = 0;
     intptr_t* opcodes = (intptr_t*)machine_code->opcodes;
 
-    CallFrame* call_frame = state->vm()->call_frame();
+    CallFrame* call_frame = state->call_frame();
     call_frame->stack_ptr_ = call_frame->stk - 1;
     call_frame->machine_code = machine_code;
     call_frame->is = &is;

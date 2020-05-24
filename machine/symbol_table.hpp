@@ -1,13 +1,11 @@
 #ifndef RBX_SYMBOLTABLE_HPP
 #define RBX_SYMBOLTABLE_HPP
 
-#include "memory/header.hpp"
-
 #include "defines.hpp"
-
 #include "diagnostics.hpp"
+#include "spinlock.hpp"
 
-#include "util/thread.hpp"
+#include "memory/header.hpp"
 
 #include <string>
 #include <unordered_map>
@@ -34,7 +32,6 @@ namespace rubinius {
   class Array;
   class String;
   class Symbol;
-  class SharedState;
 
   typedef std::vector<std::string> SymbolStrings;
   typedef std::vector<int> SymbolEncodings;
@@ -60,12 +57,14 @@ namespace rubinius {
     typedef std::vector<Kind> SymbolKinds;
 
   private:
+    diagnostics::SymbolTable* diagnostic_;
+
     SymbolMap symbols;
     SymbolStrings strings;
     SymbolEncodings encodings;
     SymbolKinds kinds;
-    utilities::thread::SpinLock lock_;
-    diagnostics::SymbolTable* diagnostic_;
+
+    locks::spinlock_mutex lock_;
 
   public:
 
@@ -82,7 +81,6 @@ namespace rubinius {
 
     void sweep(STATE);
 
-    Symbol* lookup(STATE, SharedState* shared, const std::string& str);
     Symbol* lookup(STATE, const std::string& str);
     Symbol* lookup(STATE, const char* str, size_t length);
     Symbol* lookup(STATE, const char* str, size_t length, int enc, uint32_t seed);

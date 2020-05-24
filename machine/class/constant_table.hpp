@@ -1,9 +1,11 @@
 #ifndef RBX_BUILTIN_CONSTANT_TABLE_HPP
 #define RBX_BUILTIN_CONSTANT_TABLE_HPP
 
+#include "object_utils.hpp"
+#include "spinlock.hpp"
+
 #include "class/object.hpp"
 #include "class/tuple.hpp"
-#include "object_utils.hpp"
 
 namespace rubinius {
   class Tuple;
@@ -53,9 +55,9 @@ namespace rubinius {
     attr_accessor(entries, Integer);
 
   private:
-    utilities::thread::SpinLock lock_;
+    locks::spinlock_mutex lock_;
 
-    void   redistribute(STATE, native_int size);
+    void   redistribute(STATE, intptr_t size);
 
   public:
     static void bootstrap(STATE);
@@ -63,11 +65,11 @@ namespace rubinius {
       obj->values(nil<Tuple>());
       obj->bins(Fixnum::from(0));
       obj->entries(Fixnum::from(0));
-      obj->lock_.init();
+      new(&obj->lock_) locks::spinlock_mutex;
     }
 
-    static ConstantTable* create(STATE, native_int size = 0);
-    void setup(STATE, native_int size);
+    static ConstantTable* create(STATE, intptr_t size = 0);
+    void setup(STATE, intptr_t size);
 
     // Rubinius.primitive :constant_table_allocate
     static ConstantTable* allocate(STATE, Object* self);

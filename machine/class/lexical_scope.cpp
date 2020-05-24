@@ -1,4 +1,5 @@
 #include "memory.hpp"
+#include "primitives.hpp"
 #include "call_frame.hpp"
 
 #include "class/class.hpp"
@@ -24,7 +25,7 @@ namespace rubinius {
   }
 
   LexicalScope* LexicalScope::of_sender(STATE) {
-    if(CallFrame* frame = state->vm()->get_ruby_frame(1)) {
+    if(CallFrame* frame = state->get_ruby_frame(1)) {
       return frame->lexical_scope();
     }
 

@@ -34,10 +34,11 @@ namespace rubinius {
 #define store_literal(f, x)  (f->machine_code->opcodes[f->ip()+1] = (x))
 
 #define STACK_PTR call_frame->stack_ptr_
-#define REGISTERS call_frame->stk
+#define REGISTERS call_frame->registers
 
-#define RVAL(r) (reinterpret_cast<Object**>(REGISTERS)[r])
 #define REG(r)  (reinterpret_cast<intptr_t*>(REGISTERS)[r])
+#define RVAL(r) (reinterpret_cast<Object**>(REGISTERS)[r])
+#define RFLT(r)  (reinterpret_cast<double*>(REGISTERS)[r])
 
 /* We have to use the local here we need to evaluate val before we alter the
  * stack. The reason is evaluating val might throw an exception. The old code
@@ -77,7 +78,7 @@ namespace rubinius {
 #define CF        CallFrame* call_frame
 #define COUNT     const intptr_t count
 #define LITERAL   const intptr_t literal
-#define RVALUE    const intptr_t rvalue
+#define OBJECT    const intptr_t object
 #define LOCAL     const intptr_t local
 #define DEPTH     const intptr_t depth
 #define INDEX     const intptr_t index
@@ -215,11 +216,11 @@ namespace rubinius {
     inline void p_init(STATE, CF, const intptr_t subject, const intptr_t captures);
 
     // Instrumentation instructions
-    inline void m_bytes(STATE, CF, intptr_t value, R0);
-    inline void m_counter(STATE, CF, intptr_t value);
-    inline void m_sum(STATE, CF, intptr_t value, R0);
-    inline void m_value(STATE, CF, intptr_t value, R0);
-    inline void m_time_stamp(STATE, CF, intptr_t value, const intptr_t flag);
+    inline void m_bytes(STATE, CF, OBJECT, R0);
+    inline void m_counter(STATE, CF, OBJECT);
+    inline void m_sum(STATE, CF, OBJECT, R0);
+    inline void m_value(STATE, CF, OBJECT, R0);
+    inline void m_time_stamp(STATE, CF, OBJECT, const intptr_t flag);
     inline void m_timer_start(STATE, CF, intptr_t timer);
     inline void m_timer_stop(STATE, CF, IP, const intptr_t flag);
     inline void m_log(STATE, CF, R0);
@@ -228,6 +229,8 @@ namespace rubinius {
     // Branching instructions
     inline bool b_if_serial(CF, LITERAL, R0);
     inline bool b_if_int(CF, R0, R1);
+    inline bool b_if_eint(CF, R0, R1);
+    inline bool b_if_float(CF, R0, R1);
     inline bool b_if(CF, R0);
 
     // Register movement instructions
@@ -238,24 +241,67 @@ namespace rubinius {
     inline void r_load_stack(CF, R0);
     inline void r_store_stack(CF, R0);
     inline void r_load_literal(CF, R0, LITERAL);
-    inline void r_load_int(STATE, CF, R0, R1);
-    inline void r_store_int(CF, R0, R1);
+    inline void r_load_int(CF, R0, R1);
+    inline void r_store_int(STATE, CF, R0, R1);
+    inline void r_load_int(CF, R0, R1);
+    inline void r_store_int(STATE, CF, R0, R1);
+    inline void r_load_float(CF, R0, R1);
+    inline void r_store_float(STATE, CF, R0, R1);
+    inline void r_load_ref_addr(STATE, CF, R0, R1, R2);
+    inline void r_load_byte_addr(STATE, CF, R0, R1, R2);
+    inline void r_load_ref(CF, R0, R1, R2);
+    inline void r_store_ref(CF, R0, R1, R2);
+    inline void r_load_byte(CF, R0, R1, R2);
+    inline void r_store_byte(CF, R0, R1, R2);
+    inline void r_load_handle(STATE, CF, R0, R1);
+    inline void r_store_handle(STATE, CF, R0, R1);
+    inline void r_load_ivar(STATE, CF, R0, R1, LITERAL);
+    inline void r_store_ivar(STATE, CF, R0, R1, LITERAL);
+    inline void r_load_index(STATE, CF, R0, R1, LITERAL);
+    inline void r_load_self(CF, R0);
+    inline void r_load_neg1(CF, R0);
     inline void r_load_0(CF, R0);
     inline void r_load_1(CF, R0);
-    inline void r_load_nil(CF, R0, RVALUE);
+    inline void r_load_2(CF, R0);
+    inline void r_load_nil(CF, R0, OBJECT);
     inline void r_load_false(CF, R0);
-    inline void r_load_true(STATE, CF, R0);
+    inline void r_load_true(CF, R0);
+    inline void r_load_bool(CF, R0, R1);
+    inline void r_load_m_binops(CF, R0, R1);
+    inline void r_load_f_binops(CF, R0, R1);
     inline void r_copy(CF, R0, R1);
+    inline intptr_t r_ret(STATE, CF, R0);
+    inline void r_refcnt_inc(STATE, CF, R0);
+    inline void r_refcnt_dec(STATE, CF, R0);
 
     // Native signed integer instructions
     inline void n_iadd(CF, R0, R1, R2);
     inline void n_isub(CF, R0, R1, R2);
     inline void n_imul(CF, R0, R1, R2);
     inline void n_idiv(STATE, CF, R0, R1, R2);
+    inline void n_imod(CF, R0, R1, R2);
+    inline void n_ineg(CF, R0, R1);
+    inline void n_inot(CF, R0, R1);
+    inline void n_iinc(CF, R0, R1);
+    inline void n_idec(CF, R0, R1);
+    inline void n_ibits(CF, R0, R1);
+    inline void n_isize(CF, R0, R1);
+    inline void n_iand(CF, R0, R1, R2);
+    inline void n_ior(CF, R0, R1, R2);
+    inline void n_ixor(CF, R0, R1, R2);
+    inline void n_ishl(CF, R0, R1, R2);
+    inline void n_ishr(CF, R0, R1, R2);
     inline void n_iadd_o(STATE, CF, R0, R1, R2);
     inline void n_isub_o(STATE, CF, R0, R1, R2);
     inline void n_imul_o(STATE, CF, R0, R1, R2);
     inline void n_idiv_o(STATE, CF, R0, R1, R2);
+    inline void n_idivmod(STATE, CF, R0, R1, R2);
+    inline void n_ipow_o(STATE, CF, R0, R1, R2);
+    inline void n_imod_o(STATE, CF, R0, R1, R2);
+    inline void n_ineg_o(STATE, CF, R0, R1);
+    inline void n_ishl_o(STATE, CF, R0, R1, R2);
+    inline void n_ishr_o(STATE, CF, R0, R1, R2);
+    inline void n_icmp(CF, R0, R1, R2);
     inline void n_ieq(CF, R0, R1, R2);
     inline void n_ine(CF, R0, R1, R2);
     inline void n_ilt(CF, R0, R1, R2);
@@ -263,6 +309,59 @@ namespace rubinius {
     inline void n_igt(CF, R0, R1, R2);
     inline void n_ige(CF, R0, R1, R2);
     inline void n_ipopcnt(CF, R0, R1);
+    inline void n_istr(STATE, CF, R0, R1, R2);
+    inline void n_iflt(CF, R0, R1);
+
+    inline void n_promote(STATE, CF, R0, R1, R2);
+    inline void n_demote(STATE, CF, R0, R1, R2);
+
+    // Native signed extended integer instructions
+    inline void n_eadd(STATE, CF, R0, R1, R2);
+    inline void n_esub(STATE, CF, R0, R1, R2);
+    inline void n_emul(STATE, CF, R0, R1, R2);
+    inline void n_ediv(STATE, CF, R0, R1, R2);
+    inline void n_emod(STATE, CF, R0, R1, R2);
+    inline void n_edivmod(STATE, CF, R0, R1, R2);
+    inline void n_epow(STATE, CF, R0, R1, R2);
+    inline void n_eneg(STATE, CF, R0, R1);
+    inline void n_ebits(STATE, CF, R0, R1);
+    inline void n_esize(STATE, CF, R0, R1);
+    inline void n_enot(STATE, CF, R0, R1);
+    inline void n_eand(STATE, CF, R0, R1, R2);
+    inline void n_eor(STATE, CF, R0, R1, R2);
+    inline void n_exor(STATE, CF, R0, R1, R2);
+    inline void n_eshl(STATE, CF, R0, R1, R2);
+    inline void n_eshr(STATE, CF, R0, R1, R2);
+    inline void n_epopcnt(STATE, CF, R0, R1);
+    inline void n_ecmp(STATE, CF, R0, R1, R2);
+    inline void n_eeq(STATE, CF, R0, R1, R2);
+    inline void n_ene(STATE, CF, R0, R1, R2);
+    inline void n_elt(STATE, CF, R0, R1, R2);
+    inline void n_ele(STATE, CF, R0, R1, R2);
+    inline void n_egt(STATE, CF, R0, R1, R2);
+    inline void n_ege(STATE, CF, R0, R1, R2);
+    inline void n_estr(STATE, CF, R0, R1, R2);
+    inline void n_eflt(STATE, CF, R0, R1);
+
+    // Native double floating point instructions
+    inline void n_dadd(CF, R0, R1, R2);
+    inline void n_dsub(CF, R0, R1, R2);
+    inline void n_dmul(CF, R0, R1, R2);
+    inline void n_ddiv(STATE, CF, R0, R1, R2);
+    inline void n_dmod(STATE, CF, R0, R1, R2);
+    inline void n_ddivmod(STATE, CF, R0, R1, R2);
+    inline void n_dpow(STATE, CF, R0, R1, R2);
+    inline void n_dneg(CF, R0, R1);
+    inline void n_dcmp(CF, R0, R1, R2);
+    inline void n_deq(CF, R0, R1, R2);
+    inline void n_dne(CF, R0, R1, R2);
+    inline void n_dlt(CF, R0, R1, R2);
+    inline void n_dle(CF, R0, R1, R2);
+    inline void n_dgt(CF, R0, R1, R2);
+    inline void n_dge(CF, R0, R1, R2);
+    inline void n_dstr(STATE, CF, R0, R1, R2);
+    inline void n_dinf(CF, R0, R1);
+    inline void n_dnan(CF, R0, R1);
 
     // Code execution instructions
     inline void e_cache_method_p(STATE, CF, R0, R1);

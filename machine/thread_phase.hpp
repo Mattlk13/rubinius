@@ -2,12 +2,13 @@
 #define RBX_THREAD_PHASE_HPP
 
 #include "defines.hpp"
-#include "vm.hpp"
-#include "state.hpp"
-#include "thread_nexus.hpp"
+#include "thread_state.hpp"
 #include "memory.hpp"
+#include "spinlock.hpp"
 
 #include "memory/collector.hpp"
+
+#include <mutex>
 
 namespace rubinius {
   /**
@@ -16,56 +17,56 @@ namespace rubinius {
    * is resumed.
    */
   class StopPhase {
-    State* state_;
+    ThreadState* state_;
 
   public:
     StopPhase(STATE)
       : state_(state)
     {
       while(true) {
-        if(state->shared().memory()->collector()->collect_requested_p()) {
-          state->vm()->thread_nexus()->yield(state, state->vm());
+        if(state->collector()->collect_requested_p()) {
+          state->yield();
         } else {
-          state->vm()->thread_nexus()->stop(state, state->vm());
+          state->stop();
           break;
         }
       }
     }
 
     ~StopPhase() {
-      state_->vm()->thread_nexus()->unset_stop();
-      state_->vm()->thread_nexus()->unlock(state_, state_->vm());
+      state_->unset_stop();
+      state_->unlock();
     }
   };
 
   class ManagedPhase {
-    State* state_;
+    ThreadState* state_;
 
   public:
     ManagedPhase(STATE)
       : state_(state)
     {
-      state_->vm()->managed_phase(state_);
+      state_->managed_phase();
     }
 
     ~ManagedPhase() {
-      state_->vm()->unmanaged_phase(state_);
+      state_->unmanaged_phase();
     }
 
   };
 
   class UnmanagedPhase {
-    State* state_;
+    ThreadState* state_;
 
   public:
     UnmanagedPhase(STATE)
       : state_(state)
     {
-      state_->vm()->unmanaged_phase(state_);
+      state_->unmanaged_phase();
     }
 
     ~UnmanagedPhase() {
-      state_->vm()->managed_phase(state_);
+      state_->managed_phase();
     }
   };
 
@@ -77,12 +78,12 @@ namespace rubinius {
     LockWaiting(STATE, T& in_lock)
       : lock_(in_lock)
     {
-      state->vm()->thread_nexus()->waiting_phase(state, state->vm());
+      state->waiting_phase();
 
       while(true) {
         lock_.lock();
 
-        if(state->vm()->thread_nexus()->try_managed_phase(state, state->vm())) {
+        if(state->try_managed_phase()) {
           return;
         } else {
           lock_.unlock();
@@ -95,8 +96,8 @@ namespace rubinius {
     }
   };
 
-  typedef LockWaiting<utilities::thread::Mutex> MutexLockWaiting;
-  typedef LockWaiting<utilities::thread::SpinLock> SpinLockWaiting;
+  typedef LockWaiting<std::mutex> MutexLockWaiting;
+  typedef LockWaiting<locks::spinlock_mutex> SpinLockWaiting;
 }
 
 #endif

@@ -3,7 +3,8 @@
 #include "environment.hpp"
 #include "object_utils.hpp"
 #include "on_stack.hpp"
-#include "signal.hpp"
+#include "primitives.hpp"
+#include "signals.hpp"
 #include "thread_phase.hpp"
 
 #include "class/channel.hpp"
@@ -20,6 +21,7 @@
 #include "class/symbol.hpp"
 #include "class/thread.hpp"
 #include "class/tuple.hpp"
+#include "class/unwind_state.hpp"
 
 #include "memory/collector.hpp"
 
@@ -31,91 +33,75 @@
 
 #include "missing/gettid.h"
 
-#include <ostream>
+#include <atomic>
+#include <chrono>
+#include <mutex>
+#include <sstream>
 #include <regex>
 #include <string>
-
-/* HACK: returns a value that should identify a native thread
- * for debugging threading issues. The winpthreads library
- * defines pthread_t to be a structure not a pointer.
- */
-intptr_t thread_debug_self() {
-#ifdef RBX_WINDOWS
-  return (intptr_t)(pthread_self()).p;
-#else
-  return (intptr_t)pthread_self();
-#endif
-}
-
-static intptr_t thread_debug_id(pthread_t thr) {
-#ifdef RBX_WINDOWS
-    return (intptr_t)thr.p;
-#else
-    return (intptr_t)thr;
-#endif
-}
-
+#include <thread>
 
 namespace rubinius {
-
   void Thread::bootstrap(STATE) {
     GO(thread).set(state->memory()->new_class<Class, Thread>(state, "Thread"));
   }
 
-  Thread* Thread::create(STATE, VM* vm) {
-    return Thread::create(state, G(thread), vm);
+  Thread* Thread::create(STATE, ThreadState* thread_state) {
+    return Thread::create(state, G(thread), thread_state);
   }
 
-  Thread* Thread::create(STATE, Class* klass, VM* vm) {
-    Thread* thr = state->memory()->new_object_pinned<Thread>(state, klass);
+  Thread* Thread::create(STATE, Class* klass, ThreadState* thread_state) {
+    Thread* thread = state->memory()->new_object_pinned<Thread>(state, klass);
 
-    if(!vm) {
-      Exception::raise_thread_error(state, "attempt to create Thread with NULL VM*");
+    if(!thread_state) {
+      Exception::raise_thread_error(state, "attempt to create Thread with NULL ThreadState*");
     }
 
-    thr->vm(vm);
-    thr->thread_id(state, Fixnum::from(vm->thread_id()));
+    thread->thread_state(thread_state);
+    thread->thread_id(state, Fixnum::from(thread_state->thread_id()));
 
-    vm->set_thread(thr);
+    thread_state->set_thread(thread);
 
-    thr->fiber(state, Fiber::create(state, vm));
-    thr->current_fiber(state, thr->fiber());
+    thread->fiber(state, Fiber::create(state, thread_state));
+    thread->current_fiber(state, thread->fiber());
 
-    return thr;
+    return thread;
   }
 
-  Thread* Thread::create(STATE, VM* vm, ThreadFunction function) {
-    return Thread::create(state, G(thread), vm, function);
+  Thread* Thread::create(STATE, ThreadState* thread_state, ThreadFunction function) {
+    return Thread::create(state, G(thread), thread_state, function);
   }
 
   Thread* Thread::create(STATE, Object* self, ThreadFunction function) {
-    return Thread::create(state, self,
-        state->shared().thread_nexus()->new_vm(&state->shared()),
-        function);
+    return Thread::create(state, self, state->threads()->create_thread_state(), function);
   }
 
-  Thread* Thread::create(STATE, Object* self, VM* vm, ThreadFunction function) {
-    Thread* thr = Thread::create(state, as<Class>(self), vm);
+  Thread* Thread::create(STATE, Object* self, ThreadState* thread_state, ThreadFunction function) {
+    Thread* thr = Thread::create(state, as<Class>(self), thread_state);
 
     thr->function(function);
 
     state->collector()->native_finalizer(state, thr,
         (memory::FinalizerFunction)&Thread::finalize);
 
-    state->vm()->metrics()->threads_created++;
+    state->metrics()->threads_created++;
 
     return thr;
   }
 
   void Thread::finalize(STATE, Thread* thread) {
-    if(state->shared().config.log_thread_finalizer.value) {
-      logger::write("thread: finalizer: %s", thread->vm()->name().c_str());
+    if(state->thread() == thread) {
+      // Do not finalize ourselves.
+      return;
     }
 
-    if(thread->vm() && thread->vm()->zombie_p()) {
-      thread->fiber_mutex().std::mutex::~mutex();
-      VM::discard(state, thread->vm());
-      thread->vm(NULL);
+    if(state->configuration()->log_thread_finalizer.value) {
+      logger::write("thread: finalizer: %s", thread->thread_state()->name().c_str());
+    }
+
+    if(thread->thread_state() && thread->thread_state()->zombie_p()) {
+      thread->thread_state()->discard();
+      thread->thread_state(nullptr);
     }
   }
 
@@ -123,7 +109,7 @@ namespace rubinius {
     /* These are all referenced, so OnStack is not necessary. Additionally,
      * thread is pinned, so we do not need to worry about it moving.
      */
-    Thread* thread = state->vm()->thread();
+    Thread* thread = state->thread();
     Array* args = thread->args();
     Object* block = thread->block();
 
@@ -136,11 +122,11 @@ namespace rubinius {
     /* We explicitly set the current CallFrame reference to NULL because we
      * are at the top of the stack in terms of managed code.
      */
-    state->vm()->set_call_frame(NULL);
+    state->set_call_frame(NULL);
 
-    thread->exception(state, state->vm()->thread_state()->current_exception());
+    thread->exception(state, state->unwind_state()->current_exception());
 
-    if(state->vm()->thread_state()->raise_reason() == cThreadKill) {
+    if(state->unwind_state()->raise_reason() == cThreadKill) {
       thread->value(state, cNil);
     } else if(value) {
       thread->value(state, value);
@@ -158,31 +144,32 @@ namespace rubinius {
     OnStack<1> os(state, thread);
 
     if(Fixnum* size = try_as<Fixnum>(stack_size)) {
-      state->vm()->validate_stack_size(state, size->to_native());
+      state->validate_stack_size(state, size->to_native());
       thread->stack_size(state, size);
     }
 
-    if(state->shared().config.log_thread_lifetime.value) {
-      const std::regex& filter = state->shared().config.log_thread_filter();
+    if(state->configuration()->log_thread_lifetime.value) {
+      const std::regex& filter = state->configuration()->log_thread_filter();
 
-      if(CallFrame* call_frame = state->vm()->get_filtered_frame(state, filter)) {
+      if(CallFrame* call_frame = state->get_filtered_frame(state, filter)) {
         std::ostringstream source;
 
         source << call_frame->file(state)->cpp_str(state).c_str()
           << ":" << call_frame->line(state);
 
         logger::write("thread: new: %s, %s",
-            thread->vm()->name().c_str(), source.str().c_str());
+            thread->thread_state()->name().c_str(), source.str().c_str());
 
         thread->source(state, String::create(state, source.str().c_str()));
       } else {
-        logger::write("thread: new: %s", thread->vm()->name().c_str());
+        logger::write("thread: new: %s", thread->thread_state()->name().c_str());
       }
     }
 
     if(!thread->send(state, state->symbol("initialize"), args, block, true)) {
-      thread->vm()->set_zombie(state);
-      return NULL;
+      state->threads()->remove_thread_state(thread->thread_state());
+      thread->thread_state()->set_thread_exception();
+      return nullptr;
     }
 
     thread->fork(state);
@@ -195,31 +182,32 @@ namespace rubinius {
     OnStack<1> os(state, thread);
 
     if(Fixnum* size = try_as<Fixnum>(stack_size)) {
-      state->vm()->validate_stack_size(state, size->to_native());
+      state->validate_stack_size(state, size->to_native());
       thread->stack_size(state, size);
     }
 
-    if(state->shared().config.log_thread_lifetime.value) {
-      const std::regex& filter = state->shared().config.log_thread_filter();
+    if(state->configuration()->log_thread_lifetime.value) {
+      const std::regex& filter = state->configuration()->log_thread_filter();
 
-      if(CallFrame* call_frame = state->vm()->get_filtered_frame(state, filter)) {
+      if(CallFrame* call_frame = state->get_filtered_frame(state, filter)) {
         std::ostringstream source;
 
         source << call_frame->file(state)->cpp_str(state).c_str()
           << ":" << call_frame->line(state);
 
         logger::write("thread: start: %s, %s",
-            thread->vm()->name().c_str(), source.str().c_str());
+            thread->thread_state()->name().c_str(), source.str().c_str());
 
         thread->source(state, String::create(state, source.str().c_str()));
       } else {
-        logger::write("thread: start: %s", thread->vm()->name().c_str());
+        logger::write("thread: start: %s", thread->thread_state()->name().c_str());
       }
     }
 
     if(!thread->send(state, state->symbol("__thread_initialize__"), args, block, true)) {
-      thread->vm()->set_zombie(state);
-      return NULL;
+      state->threads()->remove_thread_state(thread->thread_state());
+      thread->thread_state()->set_thread_exception();
+      return nullptr;
     }
 
     thread->fork(state);
@@ -228,7 +216,7 @@ namespace rubinius {
   }
 
   Thread* Thread::current(STATE) {
-    return state->vm()->thread();
+    return state->thread();
   }
 
   Object* Thread::variable_get(STATE, Symbol* key) {
@@ -248,7 +236,18 @@ namespace rubinius {
   }
 
   Array* Thread::fiber_list(STATE) {
-    return state->shared().vm_thread_fibers(state, this);
+    Array* fibers = Array::create(state, 0);
+
+    state->threads()->each(state, [this, fibers](STATE, ThreadState* thread_state) {
+        if(thread_state->kind() == ThreadState::eFiber
+            && !thread_state->fiber()->nil_p()
+            && thread_state->fiber()->status() != Fiber::eDead
+            && thread_state->fiber()->thread() == this) {
+          fibers->append(state, thread_state->fiber());
+        }
+      });
+
+    return fibers;
   }
 
   Object* Thread::fiber_variable_get(STATE, Symbol* key) {
@@ -268,6 +267,10 @@ namespace rubinius {
     return current_fiber()->locals()->all_keys(state);
   }
 
+  Object* Thread::status(STATE) {
+    return Fixnum::from(thread_state()->thread_status());
+  }
+
   int Thread::start_thread(STATE, void* (*function)(void*)) {
     Thread* self = this;
     OnStack<1> os(state, self);
@@ -277,118 +280,94 @@ namespace rubinius {
     pthread_attr_setstacksize(&attrs, self->stack_size()->to_native());
     pthread_attr_setdetachstate(&attrs, PTHREAD_CREATE_DETACHED);
 
-    int status = pthread_create(&self->vm()->os_thread(), &attrs,
-        function, (void*)self->vm());
+    int status = pthread_create(&self->thread_state()->os_thread(), &attrs,
+        function, (void*)self->thread_state());
 
     pthread_attr_destroy(&attrs);
 
     return status;
   }
 
-  Object* Thread::main_thread(STATE) {
-    state->vm()->managed_phase(state);
-
-    state->vm()->thread()->pid(state, Fixnum::from(gettid()));
-
-    state->shared().env()->load_core(state);
-
-    state->vm()->thread_state()->clear();
-
-    state->shared().start_console(state);
-    state->shared().start_compiler(state);
-
-    Object* klass = G(rubinius)->get_const(state, state->symbol("Loader"));
-    if(klass->nil_p()) {
-      state->shared().env()->missing_core("unable to find class Rubinius::Loader");
-      return 0;
-    }
-
-    Object* instance = 0;
-    OnStack<1> os(state, instance);
-
-    instance = klass->send(state, state->symbol("new"));
-    if(instance) {
-      state->shared().env()->set_loader(instance);
-    } else {
-      state->shared().env()->missing_core("unable to instantiate Rubinius::Loader");
-      return 0;
-    }
-
-    // Enable the JIT after the core library has loaded
-    G(jit)->enable(state);
-
-    Object* value = instance->send(state, state->symbol("main"));
-
-    state->shared().signals()->system_exit(state->vm()->thread_state()->raise_value());
-
-    return value;
+  void Thread::stop(STATE, ThreadState* thread_state) {
+    // TODO: Thread
   }
 
   void* Thread::run(void* ptr) {
-    VM* vm = reinterpret_cast<VM*>(ptr);
-    State state_obj(vm), *state = &state_obj;
+    ThreadState* state = reinterpret_cast<ThreadState*>(ptr);
+    Object* value = nullptr;
 
-    vm->set_stack_bounds(vm->thread()->stack_size()->to_native());
-    vm->set_current_thread();
-    vm->set_start_time();
+    state->set_stack_bounds(state->thread()->stack_size()->to_native());
+    state->set_current_thread();
+    state->set_start_time();
 
-    RUBINIUS_THREAD_START(
-        const_cast<RBX_DTRACE_CHAR_P>(vm->name().c_str()), vm->thread_id(), 0);
+    SET_THREAD_UNWIND(state);
 
-    vm->thread()->pid(state, Fixnum::from(gettid()));
+    if(!state->thread_unwinding_p()) {
+      RUBINIUS_THREAD_START(
+          const_cast<RBX_DTRACE_CHAR_P>(state->name().c_str()), state->thread_id(), 0);
 
-    if(state->shared().config.log_thread_lifetime.value) {
-      logger::write("thread: run: %s, %d, %#x",
-          vm->name().c_str(), vm->thread()->pid()->to_native(),
-          (unsigned int)thread_debug_self());
+      state->thread()->pid(state, Fixnum::from(gettid()));
+
+      if(state->configuration()->log_thread_lifetime.value) {
+        logger::write("thread: run: %s, %d",
+            state->name().c_str(), state->thread()->pid()->to_native());
+      }
+
+      state->metrics()->start_reporting(state);
+
+      NativeMethod::init_thread(state);
+
+      state->managed_phase();
+
+      value = state->thread()->function()(state);
+      state->set_call_frame(nullptr);
+
+      {
+        std::unique_lock<std::mutex> lk(state->join_lock());
+
+        if(state->thread()->thread_state()->unwind_state()->raise_reason() == cException) {
+          state->set_thread_exception();
+        } else {
+          state->set_thread_dead();
+        }
+
+        state->join_cond().notify_all();
+      }
+
+      if(state->lock_owned_p()) {
+        logger::write("thread: exiting while owning Threads lock: %s",
+            state->name().c_str());
+        state->unlock();
+      }
     }
 
-    vm->metrics()->start_reporting(state);
+    if(state->configuration()->log_thread_lifetime.value) {
+      logger::write("thread: exit: %s %fs", state->name().c_str(), state->run_time());
+    }
 
-    NativeMethod::init_thread(state);
+    if(state->main_thread_p()
+        || (!value && state->unwind_state()->raise_reason() == cSystemExit)) {
+      state->machine()->halt(state, state->unwind_state()->raise_value());
+    }
 
-    state->vm()->managed_phase(state);
-
-    Object* value = vm->thread()->function()(state);
-    vm->set_call_frame(NULL);
-
-    vm->thread()->join_lock_.lock();
-    vm->thread()->stopped();
-
-    vm->thread()->join_cond_.broadcast();
-    vm->thread()->join_lock_.unlock();
+    state->unmanaged_phase();
 
     NativeMethod::cleanup_thread(state);
 
-    if(vm->thread_nexus()->lock_owned_p(vm)) {
-      logger::write("thread: exiting while owning ThreadNexus lock: %s", vm->name().c_str());
-      vm->thread_nexus()->unlock(state, vm);
-    }
-
-    if(state->shared().config.log_thread_lifetime.value) {
-      logger::write("thread: exit: %s %fs", vm->name().c_str(), vm->run_time());
-    }
-
-    vm->unmanaged_phase(state);
-
-    if(vm->main_thread_p() || (!value && vm->thread_state()->raise_reason() == cExit)) {
-      state->shared().signals()->system_exit(vm->thread_state()->raise_value());
-    }
-
-    vm->set_zombie(state);
+    state->threads()->remove_thread_state(state);
 
     RUBINIUS_THREAD_STOP(
-        const_cast<RBX_DTRACE_CHAR_P>(vm->name().c_str()), vm->thread_id(), 0);
+        const_cast<RBX_DTRACE_CHAR_P>(state->name().c_str()), state->thread_id(), 0);
 
     return 0;
   }
 
   Object* Thread::name(STATE) {
-    return String::create(state, vm()->name().c_str());
+    return String::create(state, thread_state()->name().c_str());
   }
 
   Object* Thread::set_name(STATE, String* name) {
-    vm()->set_name(state, name->c_str(state));
+    thread_state()->set_name(state, name->c_str(state));
 
     return name;
   }
@@ -402,16 +381,38 @@ namespace rubinius {
   }
 
   Object* Thread::pass(STATE) {
-    atomic::pause();
+    (void)std::this_thread::yield;
     return cNil;
   }
 
   Array* Thread::list(STATE) {
-    return state->shared().vm_threads(state);
+    Array* threads = Array::create(state, 0);
+
+    state->threads()->each(state, [threads](STATE, ThreadState* thread_state) {
+        Thread *thread = thread_state->thread();
+
+        if(thread_state->kind() == ThreadState::eThread
+            &&!thread->nil_p() && !thread->thread_state()->zombie_p()) {
+          threads->append(state, thread);
+        }
+      });
+
+    return threads;
   }
 
   Fixnum* Thread::count(STATE) {
-    return state->shared().vm_threads_count(state);
+    intptr_t count = 0;
+
+    state->threads()->each(state, [&](STATE, ThreadState* thread_state) {
+        Thread *thread = thread_state->thread();
+
+        if(thread_state->kind() == ThreadState::eThread
+            &&!thread->nil_p() && !thread->thread_state()->zombie_p()) {
+          count++;
+        }
+      });
+
+    return Fixnum::from(count);
   }
 
   Object* Thread::set_priority(STATE, Fixnum* new_priority) {
@@ -424,49 +425,79 @@ namespace rubinius {
   }
 
   Object* Thread::raise(STATE, Exception* exc) {
-    utilities::thread::SpinLock::LockGuard guard(lock_);
+    std::lock_guard<std::mutex> guard(thread_state()->thread_lock());
 
-    if(!vm()) return cNil;
+    if(thread_state()->zombie_p()) return cNil;
 
-    current_fiber()->vm()->register_raise(state, exc);
-    current_fiber()->vm()->wakeup(state);
+    current_fiber()->thread_state()->register_raise(state, exc);
+    thread_state()->wakeup();
 
     return exc;
   }
 
   Object* Thread::kill(STATE) {
-    utilities::thread::SpinLock::LockGuard guard(lock_);
+    std::lock_guard<std::mutex> guard(thread_state()->thread_lock());
 
-    if(!vm()) return cNil;
+    if(thread_state()->zombie_p()) return cNil;
 
-    if(state->vm()->thread() == this) {
-      current_fiber()->vm()->thread_state()->raise_thread_kill();
-      return NULL;
+    if(state->thread() == this) {
+      thread_state()->unwind_state()->raise_thread_kill();
+      return nullptr;
     } else {
-      current_fiber()->vm()->register_kill(state);
-      current_fiber()->vm()->wakeup(state);
+      current_fiber()->thread_state()->register_kill(state);
+      thread_state()->wakeup();
       return this;
     }
   }
 
-  Thread* Thread::wakeup(STATE) {
-    utilities::thread::SpinLock::LockGuard guard(lock_);
-
-    if(!CBOOL(alive()) || !vm()) {
-      return force_as<Thread>(Primitives::failure());
+  Object* Thread::suspend(STATE, Object* duration) {
+    if(Fixnum* fix = try_as<Fixnum>(duration)) {
+      if(!fix->positive_p()) {
+        Exception::raise_argument_error(state, "time interval must be positive");
+      }
+    } else if(Float* flt = try_as<Float>(duration)) {
+      if(flt->value() < 0.0) {
+        Exception::raise_argument_error(state, "time interval must be positive");
+      }
+    } else if(duration == G(undefined)) {
+      duration = cNil;
+    } else if(!duration->nil_p()) {
+      return Primitives::failure();
     }
 
-    current_fiber()->vm()->wakeup(state);
+    auto start = std::chrono::high_resolution_clock::now();
+
+    state->thread()->thread_state()->sleep(duration);
+
+    if(state->thread()->thread_state()->thread_interrupted_p()) {
+      return nullptr;
+    }
+
+    auto end = std::chrono::high_resolution_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(end - start);
+
+    return Fixnum::from(elapsed.count());
+  }
+
+  Thread* Thread::wakeup(STATE) {
+    std::lock_guard<std::mutex> guard(thread_state()->thread_lock());
+
+    if(thread_state()->zombie_p()) {
+      Exception::raise_thread_error(state, "attempting to wake a dead Thread");
+      return nullptr;
+    }
+
+    thread_state()->wakeup();
 
     return this;
   }
 
   Tuple* Thread::context(STATE) {
-    utilities::thread::SpinLock::LockGuard guard(lock_);
+    std::lock_guard<std::mutex> guard(thread_state()->thread_lock());
 
-    if(!vm()) return nil<Tuple>();
+    if(thread_state()->zombie_p()) return nil<Tuple>();
 
-    CallFrame* call_frame = vm()->get_ruby_frame();
+    CallFrame* call_frame = thread_state()->get_ruby_frame();
     VariableScope* scope = call_frame->promote_scope(state);
 
     return Tuple::from(state, 3, Fixnum::from(call_frame->ip()),
@@ -474,43 +505,34 @@ namespace rubinius {
   }
 
   Array* Thread::mri_backtrace(STATE) {
-    utilities::thread::SpinLock::LockGuard guard(lock_);
+    std::lock_guard<std::mutex> guard(thread_state()->thread_lock());
 
-    if(!vm()) return nil<Array>();
+    if(thread_state()->zombie_p()) return nil<Array>();
 
     return Location::mri_backtrace(state);
   }
 
-  void Thread::stopped() {
-    alive(cFalse);
-  }
-
   Thread* Thread::join(STATE, Object* timeout) {
-    if(!vm()) return nil<Thread>();
+    if(thread_state()->zombie_p()) return this;
 
     Thread* self = this;
-    OnStack<2> os(state, self, timeout);
+    OnStack<1> os(state, self);
 
-    state->vm()->unmanaged_phase(state);
+    // Pull this variable out before `this` may be invalid
+    ThreadState* this_state = thread_state();
 
     {
-      utilities::thread::Mutex::LockGuard guard(self->join_lock_);
-      state->vm()->managed_phase(state);
-      atomic::memory_barrier();
+      UnmanagedPhase unmanaged(state);
+      std::unique_lock<std::mutex> lock(this_state->join_lock());
 
-      if(self->alive()->true_p()) {
-        UnmanagedPhase unmanaged(state);
+      if(timeout->nil_p()) {
+        this_state->join_cond().wait(lock,
+            [&]{ return this_state->zombie_p(); });
+      } else {
+        std::chrono::duration<double> pause(as<Float>(timeout)->value());
 
-        if(timeout->nil_p()) {
-          self->join_cond_.wait(self->join_lock_);
-        } else {
-          struct timespec ts = {0,0};
-          self->join_cond_.offset(&ts, as<Float>(timeout)->value());
-
-          if(self->join_cond_.wait_until(self->join_lock_, &ts)
-                == utilities::thread::cTimedOut) {
-            return nil<Thread>();
-          }
+        if(this_state->join_cond().wait_for(lock, pause) == std::cv_status::timeout) {
+          return nil<Thread>();
         }
       }
     }
